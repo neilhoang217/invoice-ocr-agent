@@ -52,12 +52,23 @@ AGENT_EXTRACTION_LESSONS = [
         "a blank P.O. # field with Invoice # INV1048 should use INV1048."
     ),
     (
-        "For Computerland packing slips, the Sales Order number is the preferred lookup value. "
-        "Extract it into the Order Number field even if a PO Number is also present."
+        "For Computerland packing slips, the Sales Order number (labeled 'Sales order') is the "
+        "preferred lookup value. Extract it into the Order Number field. If a 'Requisition' number "
+        "is also present (e.g., 'Requisition: 67030-4955'), extract it into the PO Number field as "
+        "a fallback lookup value."
     ),
     (
         "For FedEx documents (proof-of-delivery, invoices), the FedEx Tracking Number is the "
         "preferred lookup value. Extract it into the Tracking Number field."
+    ),
+    (
+        "For FedEx shipping labels, the tracking number is labeled 'TRK#' and the digits appear "
+        "in space-separated groups (e.g., 'TRK#: 5263 3769 1880'). Extract only the digits "
+        "without spaces into the Tracking Number field (e.g., '526337691880')."
+    ),
+    (
+        "For ISSQUARED packing lists, the 'Customer PO#' field (e.g., 'Customer PO#: 67030-11959') "
+        "is the PO Number. Extract it into the PO Number field."
     ),
 ]
 
@@ -70,6 +81,8 @@ VENDOR_SIGNATURES = [
     ("Computerland Packing Slip", [r"\bcomputerland\b", r"\bpacking\s+slip\b"]),
     ("Computerland Invoice",      [r"\bcomputerland\b", r"\binvoice\b"]),
     ("Computerland",              [r"\bcomputerland\b"]),
+    ("ISSQUARED Packing List",    [r"\bissquared\b", r"\bpacking\s+list\b"]),
+    ("ISSQUARED",                 [r"\bissquared\b"]),
     ("FedEx",                     [r"\bfed\s*ex\b"]),
 ]
 
@@ -112,6 +125,8 @@ PO_NUMBER_PATTERNS = [
     r"\bpurchase\s+order\s*(?:number|no\.?|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,})\b",
     r"\bp\s*\.?\s*[o0]\s*\.?\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,})\b",
     r"\bp\s*\.?\s*[o0]\s*\.?\s+([A-Z0-9][A-Z0-9-]{2,})\b",
+    # Computerland packing slip requisition number — used as PO Number fallback
+    r"\brequisition\s*(?:number|no\.?|#)?\s*[:#-]?\s*([0-9][A-Z0-9-]{3,})\b",
 ]
 
 INVOICE_NUMBER_PATTERNS = [
@@ -130,6 +145,8 @@ ORDER_NUMBER_PATTERNS = [
 ]
 
 TRACKING_NUMBER_PATTERNS = [
+    # FedEx shipping label: "TRK#: 5263 3769 1880" — digits stripped of spaces by extract fn
+    r"TRK#\s*:?\s*(\d{4}\s+\d{4}\s+\d{4})\b",
     r"\b(?:fedex\s+)?tracking\s*(?:number|no\.?|#)?\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
     r"\bproof-of-delivery\s+for\s+tracking\s+number\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
 ]
@@ -496,8 +513,12 @@ def extract_tracking_number_from_text(text):
     for pattern in TRACKING_NUMBER_PATTERNS:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
-            return match.group(1).strip(" .,:;")
-
+            value = match.group(1).strip(" .,:;")
+            # TRK# format produces space-separated digit groups — compact to one number
+            compact = re.sub(r"\s+", "", value)
+            if compact.isdigit():
+                value = compact
+            return value
     return "Needs Manual Review"
 
 
@@ -668,6 +689,9 @@ Rules:
 - The PO Number must be the value shown next to a PO/P.O./Purchase Order label.
 - Delivery receipts and packing slips may use Sales order as the order lookup value. Keep it in the Order Number field.
 - FedEx proof-of-delivery documents may use Tracking number as a lookup value. Keep it in the Tracking Number field.
+- For FedEx shipping labels, the tracking number is labeled "TRK#" with space-separated digit groups (e.g., "TRK#: 5263 3769 1880"). Extract only the digits without spaces into the Tracking Number field (e.g., "526337691880").
+- For Computerland packing slips, extract the "Sales order" value (e.g., "ORD-16625-M7V2B1") into the Order Number field. If a "Requisition" number is also present (e.g., "Requisition: 67030-4955"), extract it into the PO Number field as a secondary lookup.
+- For ISSQUARED packing lists, extract the "Customer PO#" value (e.g., "Customer PO#: 67030-11959") into the PO Number field.
 - If no PO/P.O./Purchase Order label exists, leave PO Number as "Needs Manual Review". Python will try Order Number, then Tracking Number, then Invoice Number as separate lookup values.
 - Do not use the item number, ticket/RITM/SCTASK number, tracking number, date, quantity, or dollar amount as the PO Number.
 - If both a PO Number and an Order Number appear, keep them in their separate JSON fields.
