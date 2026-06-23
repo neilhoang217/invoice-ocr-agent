@@ -18,7 +18,7 @@ Open `http://127.0.0.1:7860` in your browser.
 
 ### Upload Invoices
 Drag and drop one or more PDF, PNG, JPG, or TIFF files. The app:
-1. Runs EasyOCR to extract raw text
+1. Runs EasyOCR to extract raw text (auto-corrects EXIF rotation and handles documents photographed sideways)
 2. Sends the text to a local Ollama model (`llama3.1:8b`) to extract structured fields
 3. Validates the extracted order/PO value against `Purchase Orders.xlsx`
 4. Generates a DYMO label for **every matching ticket row** in the workbook
@@ -42,14 +42,25 @@ When the Excel lookup fails or AI verification is not confident, a row is added 
 
 The agent recognises vendor-specific document templates from the letterhead and adjusts its lookup priority accordingly:
 
-| Detected Vendor | Lookup Priority |
-|---|---|
-| Computerland Packing Slip | Sales Order → PO Number |
-| Computerland Invoice | Sales Order → PO Number |
-| FedEx | Tracking Number → PO Number |
-| All others | PO Number → Sales Order |
+| Detected Vendor | Primary Lookup | Fallback | Excel Column |
+|---|---|---|---|
+| Computerland Packing Slip | Sales Order (ORD-…) | Requisition Number | Order Number |
+| Computerland Invoice | Sales Order (ORD-…) | PO Number | Order Number |
+| ISSQUARED Packing List | Customer PO# | — | Order Number |
+| FedEx | Tracking Number | PO# | Tracking # |
+| All others | PO Number | Sales Order | Order Number |
 
-To add a new vendor, add one line to `VENDOR_SIGNATURES` in `invoice_ocr.py`.
+**FedEx notes:**
+- Tracking number is extracted from the `TRK#` field (e.g. `TRK#:5263 3769 1880` → `526337691880`)
+- Lookup searches the `Tracking #` column in `Purchase Orders.xlsx`, not `Order Number`
+- The `Order#` field on FedEx labels is the shipper's internal reference — it is ignored
+- If the FedEx logo is unreadable by OCR, `TRK#` presence in text is used to infer the vendor
+
+**ISSQUARED notes:**
+- `Customer PO#` is extracted even when the document also shows FedEx carrier details (`SHIPPED VIA: FedEx Ground`)
+- ISSQUARED signature takes priority over FedEx detection
+
+To add a new vendor, add one entry to `VENDOR_SIGNATURES` in `invoice_ocr.py`.
 
 ---
 
@@ -105,9 +116,11 @@ If the printer option is off, labels are generated and saved but not sent. Use t
 
 - File: `approved_excel_files/Purchase Orders.xlsx`
 - Sheet: `Current Year`
-- Required column: `Order Number`
+- Required columns: `Order Number` (all vendors), `Tracking #` (FedEx)
 
 The AI model never reads the workbook directly. Python performs all lookups.
+
+Matching is tolerant of OCR character confusion: `Z↔2` and `O↔0` are folded before comparison, so `ORD-16625-M7VZB1` matches `ORD-16625-M7V2B1`.
 
 ---
 
@@ -115,10 +128,21 @@ The AI model never reads the workbook directly. Python performs all lookups.
 
 When multiple values could be the lookup key, the app tries them in this order (vendor-adjusted):
 
-1. PO Number (from a visible PO/P.O./Purchase Order label)
-2. Sales Order / Order Number
-3. FedEx Tracking Number
-4. Invoice Number (fallback)
+**FedEx documents:**
+1. Tracking Number → searches `Tracking #` column
+2. PO Number → searches `Order Number` column
+
+**Computerland documents:**
+1. Sales Order (ORD-…) → searches `Order Number` column
+2. Requisition Number → searches `Order Number` column
+
+**ISSQUARED documents:**
+1. Customer PO# → searches `Order Number` column
+
+**All others:**
+1. PO Number → searches `Order Number` column
+2. Order Number → searches `Order Number` column
+3. Invoice Number (last resort fallback)
 
 ---
 

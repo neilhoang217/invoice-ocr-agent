@@ -9,7 +9,7 @@ flowchart TD
     B --> C[Save to uploads/ as temp file]
     C --> D{File type?}
     D -- PDF --> E[PyMuPDF renders pages\nEasyOCR reads each page]
-    D -- Image --> F[EasyOCR reads image]
+    D -- Image --> F[EXIF rotation corrected\nEasyOCR reads image at 0/90/180/270°]
     E --> G[Raw OCR text]
     F --> G
 
@@ -19,11 +19,11 @@ flowchart TD
     I --> K[Regex validates PO / Order / Tracking]
     J --> K
 
-    K --> VD[Vendor signature detection\nComputerland Packing Slip / Invoice\nFedEx / others]
-    VD --> L[Set lookup priority by vendor]
+    K --> VD[Vendor signature detection\nComputerland / ISSQUARED / FedEx / others\nTRK# label infers FedEx if logo unreadable]
+    VD --> L[Set lookup priority + Excel column by vendor]
 
-    L --> M[Try candidates in order:\n1 PO Number\n2 Sales Order\n3 Tracking Number\n4 Invoice Number fallback]
-    M --> N{Match found in\nPurchase Orders.xlsx?}
+    L --> M[Try candidates in order:\nFedEx: Tracking No → PO No  ── Tracking # column\nComputerland: Sales Order → Requisition ── Order Number column\nISSQUARED: Customer PO# ── Order Number column\nOthers: PO No → Order No → Invoice No ── Order Number column]
+    M --> N{Match found in\nPurchase Orders.xlsx?\nOCR Z↔2 O↔0 folding applied}
 
     N -- No --> O[Needs Manual Review\nSave row to corrections.csv]
     N -- Yes --> P[ALL matching rows returned\none per ticket]
@@ -61,7 +61,7 @@ flowchart TD
 flowchart TD
     A([User enters order number\nclicks Look Up & Print]) --> B[POST /api/lookup\norder_number, send_to_printer, printer_queue]
 
-    B --> C[Search Purchase Orders.xlsx\nOrder Number column]
+    B --> C[Search Purchase Orders.xlsx\nOrder Number column first\nthen Tracking # column as fallback]
     C --> D{Match found?}
 
     D -- No --> ERR([Return no match error])

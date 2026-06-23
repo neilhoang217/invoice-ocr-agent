@@ -177,6 +177,10 @@ def process_uploaded_file(
         else:
             ocr_text = invoice_ocr.read_image_text(str(upload_path), reader)
 
+    print("\n===== RAW OCR TEXT =====")
+    print(ocr_text)
+    print("========================\n")
+
     learned_po_examples, correction_examples = get_cached_examples()
 
     fields = invoice_ocr.extract_fields(
@@ -381,8 +385,10 @@ class InvoiceOCRHandler(SimpleHTTPRequestHandler):
             json_response(self, 400, {"ok": False, "error": "order_number is required."})
             return
 
-        from excel_lookup import lookup_po_number
+        from excel_lookup import lookup_po_number, TRACKING_NUMBER_COLUMN_NAMES
         lookup_result = lookup_po_number(order_number)
+        if lookup_result.get("status") != "MATCH_FOUND":
+            lookup_result = lookup_po_number(order_number, column_names=TRACKING_NUMBER_COLUMN_NAMES)
 
         if lookup_result.get("status") != "MATCH_FOUND":
             json_response(self, 200, {"ok": False, "error": f"No match found for '{order_number}'."})
