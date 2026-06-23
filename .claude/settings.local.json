@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv /Users/neil.hoang/invoice-ocr-agent/beginner_ocr.py /Users/neil.hoang/invoice-ocr-agent/invoice_ocr.py)",
+      "Bash(git -c user.email=\"neil.hoang0721@gmail.com\" -c user.name=\"Neil Hoang\" commit -am \"Windows support: platform-aware fonts, printing, and printer name validation\")"
+    ],
+    "additionalDirectories": [
+      "/Users/neil.hoang/invoice-ocr-agent"
+    ]
+  }
+}
