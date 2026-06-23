@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import os
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -112,9 +113,14 @@ def append_print_log(row):
 
 def _load_font(size):
     candidates = [
+        # Windows
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/Arial.ttf",
+        # macOS
         "/System/Library/Fonts/Helvetica.ttc",
         "/Library/Fonts/Arial.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
+        # Linux
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
     ]
@@ -235,13 +241,18 @@ def write_label_file(source_file, duplicate_key, image):
 
 def validate_queue_name(printer_queue):
     printer_queue = str(printer_queue or "").strip()
-    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
     if not printer_queue:
         raise ValueError("DYMO printer queue name is required.")
-    if any(character not in allowed for character in printer_queue):
-        raise ValueError(
-            "DYMO printer queue name may only contain letters, numbers, dots, dashes, and underscores."
-        )
+    if platform.system() == "Windows":
+        forbidden = set('<>"|&;')
+        if any(c in forbidden for c in printer_queue):
+            raise ValueError("Printer name contains invalid characters.")
+    else:
+        allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+        if any(character not in allowed for character in printer_queue):
+            raise ValueError(
+                "DYMO printer queue name may only contain letters, numbers, dots, dashes, and underscores."
+            )
     return printer_queue
 
 
@@ -249,15 +260,48 @@ def print_existing_label(label_path, printer_queue):
     _send_label_to_printer(label_path, printer_queue)
 
 
+def _send_label_to_printer_windows(label_path, printer_queue):
+    try:
+        import win32print
+        import win32ui
+        from PIL import ImageWin
+    except ImportError:
+        raise OSError(
+            "pywin32 is required for printing on Windows. Run: pip install pywin32"
+        )
+
+    img = Image.open(str(label_path))
+    hdc = win32ui.CreateDC()
+    hdc.CreatePrinterDC(printer_queue)
+
+    printable_w = hdc.GetDeviceCaps(8)
+    printable_h = hdc.GetDeviceCaps(10)
+    img_w, img_h = img.size
+    scale = min(printable_w / img_w, printable_h / img_h)
+    print_w = int(img_w * scale)
+    print_h = int(img_h * scale)
+
+    hdc.StartDoc(Path(label_path).name)
+    hdc.StartPage()
+    dib = ImageWin.Dib(img)
+    dib.draw(hdc.GetHandleOutput(), (0, 0, print_w, print_h))
+    hdc.EndPage()
+    hdc.EndDoc()
+    hdc.DeleteDC()
+
+
 def _send_label_to_printer(label_path, printer_queue):
     printer_queue = validate_queue_name(printer_queue)
-    subprocess.run(
-        ["lp", "-d", printer_queue, "-o", "PageSize=w154h198", str(label_path)],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    if platform.system() == "Windows":
+        _send_label_to_printer_windows(label_path, printer_queue)
+    else:
+        subprocess.run(
+            ["lp", "-d", printer_queue, "-o", "PageSize=w154h198", str(label_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
 
 def base_log_row(source_file, fields, lookup_result, duplicate_key, printer_queue):

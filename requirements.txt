@@ -4,3 +4,5 @@ numpy
 pandas
 pymupdf
 openpyxl
+# Windows only — required for label printing:
+# pywin32
