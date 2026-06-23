@@ -221,14 +221,18 @@ def build_label_image(fields, lookup_result):
     return image
 
 
-def write_label_file(source_file, duplicate_key, image):
+def get_label_path(source_file, duplicate_key):
     LABEL_OUTPUT_FOLDER.mkdir(exist_ok=True)
     base_name = Path(source_file).stem or "invoice"
     safe_base_name = "".join(
         character if character.isalnum() or character in "-_" else "_"
         for character in base_name
     )[:60]
-    label_path = LABEL_OUTPUT_FOLDER / f"{safe_base_name}_{duplicate_key}.png"
+    return LABEL_OUTPUT_FOLDER / f"{safe_base_name}_{duplicate_key}.png"
+
+
+def write_label_file(source_file, duplicate_key, image):
+    label_path = get_label_path(source_file, duplicate_key)
     image.save(str(label_path), "PNG", dpi=(LABEL_DPI, LABEL_DPI))
     return label_path
 
@@ -275,26 +279,10 @@ def base_log_row(source_file, fields, lookup_result, duplicate_key, printer_queu
     }
 
 
-def create_and_maybe_print_label(
-    source_file,
-    fields,
-    lookup_result,
-    send_to_printer=False,
-    printer_queue="",
-):
-    if not lookup_result or lookup_result.get("status") != "MATCH_FOUND":
-        return {
-            "status": LABEL_SKIPPED,
-            "message": "Label skipped because no Excel match was found.",
-            "label_path": None,
-            "duplicate_key": None,
-        }
-
+def _create_single_label(source_file, fields, lookup_result, send_to_printer, printer_queue):
     duplicate_key = build_duplicate_key(source_file, fields, lookup_result)
     log_row = base_log_row(source_file, fields, lookup_result, duplicate_key, printer_queue)
-
-    image = build_label_image(fields, lookup_result)
-    label_path = write_label_file(source_file, duplicate_key, image)
+    label_path = get_label_path(source_file, duplicate_key)
 
     if was_already_printed(duplicate_key):
         message = "Duplicate print blocked because this document/match was already sent to a printer."
@@ -302,18 +290,18 @@ def create_and_maybe_print_label(
         return {
             "status": DUPLICATE_BLOCKED,
             "message": message,
-            "label_path": str(label_path),
+            "label_path": str(label_path) if label_path.exists() else None,
             "duplicate_key": duplicate_key,
         }
 
+    # Skip regeneration if the label file already exists (e.g. double-click).
+    if not label_path.exists():
+        image = build_label_image(fields, lookup_result)
+        write_label_file(source_file, duplicate_key, image)
+
     if not send_to_printer:
-        message = f"Label generated and saved to {label_path}."
-        append_print_log({
-            **log_row,
-            "status": LABEL_GENERATED,
-            "label_path": str(label_path),
-            "message": message,
-        })
+        message = f"Label generated and saved to {label_path.name}."
+        append_print_log({**log_row, "status": LABEL_GENERATED, "label_path": str(label_path), "message": message})
         return {
             "status": LABEL_GENERATED,
             "message": message,
@@ -323,12 +311,7 @@ def create_and_maybe_print_label(
 
     if not printer_queue:
         message = "Label generated, but DYMO printer queue was missing so it was not sent."
-        append_print_log({
-            **log_row,
-            "status": PRINT_FAILED,
-            "label_path": str(label_path),
-            "message": message,
-        })
+        append_print_log({**log_row, "status": PRINT_FAILED, "label_path": str(label_path), "message": message})
         return {
             "status": PRINT_FAILED,
             "message": message,
@@ -340,12 +323,7 @@ def create_and_maybe_print_label(
         _send_label_to_printer(label_path, printer_queue)
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         message = f"Label generated, but printer send failed: {error}"
-        append_print_log({
-            **log_row,
-            "status": PRINT_FAILED,
-            "label_path": str(label_path),
-            "message": message,
-        })
+        append_print_log({**log_row, "status": PRINT_FAILED, "label_path": str(label_path), "message": message})
         return {
             "status": PRINT_FAILED,
             "message": message,
@@ -353,7 +331,8 @@ def create_and_maybe_print_label(
             "duplicate_key": duplicate_key,
         }
 
-    message = f"Label sent to DYMO printer queue {printer_queue}."
+    label_path.unlink(missing_ok=True)
+    message = f"Label sent to DYMO printer queue {printer_queue} and file cleaned up."
     append_print_log({
         **log_row,
         "status": LABEL_SENT_TO_PRINTER,
@@ -363,6 +342,33 @@ def create_and_maybe_print_label(
     return {
         "status": LABEL_SENT_TO_PRINTER,
         "message": message,
-        "label_path": str(label_path),
+        "label_path": None,
         "duplicate_key": duplicate_key,
     }
+
+
+def create_and_maybe_print_label(
+    source_file,
+    fields,
+    lookup_result,
+    send_to_printer=False,
+    printer_queue="",
+):
+    if not lookup_result or lookup_result.get("status") != "MATCH_FOUND":
+        return [{
+            "status": LABEL_SKIPPED,
+            "message": "Label skipped because no Excel match was found.",
+            "label_path": None,
+            "duplicate_key": None,
+        }]
+
+    all_records = lookup_result.get("all_records") or [{
+        "matched_row_number": lookup_result.get("matched_row_number"),
+        "record": lookup_result.get("record"),
+    }]
+
+    results = []
+    for match in all_records:
+        single_lookup = {**lookup_result, **match}
+        results.append(_create_single_label(source_file, fields, single_lookup, send_to_printer, printer_queue))
+    return results

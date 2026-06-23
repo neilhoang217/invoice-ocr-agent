@@ -61,13 +61,16 @@ AGENT_EXTRACTION_LESSONS = [
     ),
 ]
 
-VENDOR_SALES_ORDER_PRIORITY = {"COMPUTERLAND"}
+VENDOR_SALES_ORDER_PRIORITY = {"COMPUTERLAND", "COMPUTERLAND PACKING SLIP", "COMPUTERLAND INVOICE"}
 VENDOR_TRACKING_PRIORITY = {"FEDEX"}
 
-# Each entry: (display name, regex that identifies this vendor from letterhead/branding text)
+# Each entry: (display name, [patterns]) — ALL patterns must match to identify the vendor.
+# More specific entries (more patterns) must come before broader fallbacks.
 VENDOR_SIGNATURES = [
-    ("Computerland", r"\bcomputerland\b"),
-    ("FedEx",        r"\bfed\s*ex\b"),
+    ("Computerland Packing Slip", [r"\bcomputerland\b", r"\bpacking\s+slip\b"]),
+    ("Computerland Invoice",      [r"\bcomputerland\b", r"\binvoice\b"]),
+    ("Computerland",              [r"\bcomputerland\b"]),
+    ("FedEx",                     [r"\bfed\s*ex\b"]),
 ]
 
 # PyMuPDF is only needed when the input file is a PDF.
@@ -132,9 +135,9 @@ TRACKING_NUMBER_PATTERNS = [
 ]
 
 def detect_vendor_from_text(text):
-    """Return a vendor display name if a known vendor signature is found in the OCR text."""
-    for vendor_name, pattern in VENDOR_SIGNATURES:
-        if re.search(pattern, text, re.IGNORECASE):
+    """Return a vendor display name if all patterns for a known vendor are found in the OCR text."""
+    for vendor_name, patterns in VENDOR_SIGNATURES:
+        if all(re.search(p, text, re.IGNORECASE) for p in patterns):
             return vendor_name
     return None
 

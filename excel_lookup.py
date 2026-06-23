@@ -167,16 +167,22 @@ def lookup_po_number(po_number=None):
         matched_indices = dataframe.index[match_mask]
 
         if len(matched_indices) > 0:
-            row_index = matched_indices[0]
-            row = dataframe.loc[row_index]
-            matched_by = "Order Number"
-            logger.info("Excel match found by %s.", matched_by)
+            all_records = [
+                {
+                    "matched_row_number": int(idx) + 2,
+                    "record": dataframe.loc[idx].fillna("").to_dict(),
+                }
+                for idx in matched_indices
+            ]
+            first = all_records[0]
+            logger.info("Excel match found by Order Number. %d row(s).", len(all_records))
             return {
                 "status": MATCH_FOUND,
-                "message": f"Matched extracted lookup value against Excel {matched_by}.",
-                "matched_by": matched_by,
-                "matched_row_number": int(row_index) + 2,
-                "record": row.fillna("").to_dict(),
+                "message": f"Matched extracted lookup value against Excel Order Number. {len(all_records)} row(s) found.",
+                "matched_by": "Order Number",
+                "matched_row_number": first["matched_row_number"],
+                "record": first["record"],
+                "all_records": all_records,
             }
 
         logger.info("No Excel match found.")
