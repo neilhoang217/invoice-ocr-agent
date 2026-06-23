@@ -1,131 +1,168 @@
-Invoice OCR (EasyOCR)
+# Invoice OCR Agent
 
-Local prototype for extracting invoice and shipping fields from images/PDFs, validating PO/order values against a local Excel workbook, and saving results to CSV.
+Local web app for extracting invoice and shipping fields from PDFs and images, validating order numbers against a Purchase Orders workbook, and printing DYMO pickup labels for every matched ticket.
 
-Main script:
+---
 
-Use `invoice_ocr.py` to read one or more image/PDF files, run OCR, extract common invoice fields, check the PO against `Purchase Orders.xlsx`, print the results, and optionally append them to `extracted.csv`.
-
-Local web app:
-
-Run this command from the project folder:
+## Quick Start
 
 ```
 ./venv/bin/python web_app.py
 ```
 
-Then open this address in your browser:
+Open `http://127.0.0.1:7860` in your browser.
+
+---
+
+## Web App Features
+
+### Upload Invoices
+Drag and drop one or more PDF, PNG, JPG, or TIFF files. The app:
+1. Runs EasyOCR to extract raw text
+2. Sends the text to a local Ollama model (`llama3.1:8b`) to extract structured fields
+3. Validates the extracted order/PO value against `Purchase Orders.xlsx`
+4. Generates a DYMO label for **every matching ticket row** in the workbook
+5. Optionally sends all labels to the DYMO printer automatically
+
+Files are locked for new uploads while a job is processing. Once complete, the button re-enables.
+
+### Manual Order Lookup
+Below the upload section is a **Manual Order Lookup** input. Type any order number, press Enter or click **Look Up & Print**, and the app:
+- Searches `Purchase Orders.xlsx` directly (no OCR needed)
+- Lists every matching ticket row (Ticket, Dept, Requester, Qty, Item)
+- Generates a label per row
+- Shows a **Print** button per row to send each label individually to the DYMO printer
+
+### Corrections Panel
+When the Excel lookup fails or AI verification is not confident, a row is added to `corrections.csv`. Open the **Corrections** panel in the UI to enter a corrected lookup value. Saved corrections feed back into future AI prompts automatically.
+
+---
+
+## Vendor Template Detection
+
+The agent recognises vendor-specific document templates from the letterhead and adjusts its lookup priority accordingly:
+
+| Detected Vendor | Lookup Priority |
+|---|---|
+| Computerland Packing Slip | Sales Order → PO Number |
+| Computerland Invoice | Sales Order → PO Number |
+| FedEx | Tracking Number → PO Number |
+| All others | PO Number → Sales Order |
+
+To add a new vendor, add one line to `VENDOR_SIGNATURES` in `invoice_ocr.py`.
+
+---
+
+## Multi-Ticket Labels
+
+If an order number matches multiple rows in `Purchase Orders.xlsx`, the app generates and prints **one label per row**. For example, order 11773 with 5 ticket rows produces 5 labels — one per requester.
+
+---
+
+## DYMO Label Layout
+
+Labels are 54 mm × 70 mm at 300 DPI (landscape). Each label shows:
 
 ```
-http://127.0.0.1:7860
+ITD Pickup Item
+──────────────
+Order: 11773
+Ticket: RITM0024764
+Dept: ESD
+Requester: Julia Leal
+Qty: 1
+
+Item:
+Adobe Pro
 ```
 
-The web app lets you drag and drop one or more PDF/PNG/JPG/TIFF files, choose the Ollama model name, turn Excel validation on or off, and optionally save results to `extracted.csv`. Uploaded files are written to the local `uploads/` folder so Python can process them. The AI model still receives OCR text only; it does not receive file-system access.
+---
 
-DYMO label workflow:
+## Label File Cleanup
 
-- When Excel validation finds a matching order, the app generates a DYMO-compatible PNG label.
-- Generated labels are saved in `generated_labels/`.
-- Print job activity is logged in `print_jobs.csv`.
-- Duplicate print jobs are blocked when the same invoice/PO/tracking lookup and matched Excel row were already sent to a printer.
-- DYMO printing uses your computer's CUPS printer queue. First add the DYMO LabelWriter in your operating system (System Settings > Printers & Scanners on macOS), then enter the queue name in the web app and check `Send matched labels to DYMO printer`. The app sends the PNG label with `lp -d <queue-name> <label-file>`.
+- Labels are saved as PNG files in `generated_labels/` when generated
+- **After a successful print, the PNG file is deleted automatically**
+- The print event is still recorded in `print_jobs.csv` for duplicate tracking
+- If you click Look Up & Print twice without printing, the existing file is reused (no overwrite)
+- If a label was already sent to the printer, a second print attempt is blocked as a duplicate
 
-If the printer option is off, the app still generates the `.png` label file when a match is found. That is useful for testing before sending anything to a real printer.
+---
 
-Command-line app:
+## DYMO Printer Setup (macOS)
 
-```
-python invoice_ocr.py /path/to/invoice.png
-python invoice_ocr.py /path/to/invoice.pdf
-python invoice_ocr.py /path/to/invoice1.pdf /path/to/invoice2.png
-python invoice_ocr.py /path/to/invoice.pdf --csv
-python invoice_ocr.py /path/to/invoice.pdf --model llama3.3
-python invoice_ocr.py /path/to/invoice.pdf --no-excel
-python invoice_ocr.py /path/to/invoice.pdf --debug
-```
+1. Add the DYMO LabelWriter in **System Settings → Printers & Scanners**
+2. Note the queue name (e.g. `DYMO_LabelWriter_450`)
+3. Enter it in the **DYMO Printer Queue Name** field in the web app
+4. Check **Send matched labels to DYMO printer**
 
-The beginner script uses this workflow:
+The app sends the PNG label with `lp -d <queue-name> -o PageSize=w154h198 <label-file>`.
 
-```
-Image/PDF -> EasyOCR -> OCR Text -> Ollama Extraction -> Python Excel Lookup -> Ollama Verification -> CSV
-```
+If the printer option is off, labels are generated and saved but not sent. Use this for testing.
 
-By default it asks Ollama to use `llama3.1:8b`. You can use another local model with `--model`, for example `--model llama3.3`.
+---
 
-If Ollama is not running or the model does not return valid JSON, the script falls back to the simpler regex extraction.
+## Excel Workbook
 
-Normal output is meant for end users. It only shows whether the order was found and, when found, the matched row plus `Ticket`, `Dept`, `Requester`, `Qty`, and `Item`. Use `--debug` when you want to see OCR fields, lookup candidates, Excel lookup messages, and AI verification details.
-
-Secure Excel lookup:
-
-Put the approved workbooks here:
-
-```
-approved_excel_files/Purchase Orders.xlsx
-```
-
-Then run:
-
-```
-python invoice_ocr.py /path/to/invoice.pdf
-```
-
-The script checks the approved workbook automatically after OCR extraction. Use `--no-excel` only when you want to skip this lookup. You can pass one file or multiple PDF/PNG files in the same command.
-
-The AI model never receives file-system access. It extracts structured values from OCR text, and Python reads `Purchase Orders.xlsx`, uses only the `Current Year` sheet, and searches the `Order Number` column for an exact or partial match. The extracted `PO Number` stays literal: if the invoice has no visible PO value, the script keeps `PO Number` as `Needs Manual Review` and writes the value used for Excel into separate `Lookup Value` and `Lookup Value Source` columns. The lookup candidates are tried in this order: `PO Number`, packing-slip or delivery-receipt `Sales order`, FedEx `Tracking Number`, then `Invoice Number` fallback. After Python performs the workbook lookup, the AI model reviews the OCR text, extracted fields, lookup status, and matched row values to produce a verification status, confidence level, issues, recommended PO correction, and correction notes.
-
-When a workbook match is found and AI verification returns `VERIFIED`, the script records a small local example in `learned_po_patterns.jsonl`. Future runs include recent successful PO examples in the Ollama prompt so the model gets better at the PO pattern over time without directly reading the workbook or file system.
-
-Correction learning loop:
-
-The script creates `corrections.csv` with these review columns:
-
-- Lookup Value
-- Lookup Value Source
-- AI Verification Status
-- AI Verification Confidence
-- Corrected PO Number
-- Corrected Invoice Number
-- Corrected Lookup Value
-- Corrected Lookup Value Source
-- Correction Notes
-
-When the Excel lookup does not match or AI verification is not `VERIFIED`, the script adds a row to `corrections.csv`. Review that row, fill in the corrected columns, and add a short note. On the next run, the script loads recent completed corrections and includes them in the AI extraction and verification prompts. That gives the local agent examples from your real invoices without letting the model read files by itself.
-
-Expected Excel data:
-
-- Workbook: `approved_excel_files/Purchase Orders.xlsx`
+- File: `approved_excel_files/Purchase Orders.xlsx`
 - Sheet: `Current Year`
-- Column: `Order Number`
+- Required column: `Order Number`
 
-The script searches lookup candidates against the `Order Number` column. If the document does not contain a clear PO label, it can use a packing-slip `Sales order`, a FedEx `Tracking Number`, or finally the invoice number fallback. If none of those values are clear, the result is marked for manual review.
+The AI model never reads the workbook directly. Python performs all lookups.
 
-Extracted fields:
+---
 
-- Invoice Number
-- PO Number
-- Lookup Value
-- Lookup Value Source
-- Lookup Candidates
-- Tracking Number
-- Carrier Name
-- Vendor Name
-- Customer Name
-- Invoice Date
-- Order Number
-- Item Number
-- Quantity
-- Total Amount
-- Shipping Address
-- Billing Address
+## Lookup Candidate Order
 
-Requirements:
+When multiple values could be the lookup key, the app tries them in this order (vendor-adjusted):
+
+1. PO Number (from a visible PO/P.O./Purchase Order label)
+2. Sales Order / Order Number
+3. FedEx Tracking Number
+4. Invoice Number (fallback)
+
+---
+
+## Learning Loop
+
+- **`learned_po_patterns.jsonl`** — when AI verification returns `VERIFIED`, the matched PO→Order pair is saved and included in future Ollama prompts
+- **`corrections.csv`** — when lookup fails or verification is not confident, a review row is saved; completed corrections are included in future prompts
+
+---
+
+## Key Files
+
+| File | Role |
+|---|---|
+| `web_app.py` | HTTP server, API routes, concurrent file processing, SSE streaming |
+| `invoice_ocr.py` | OCR, field extraction, vendor detection, Ollama prompts, lookup orchestration |
+| `excel_lookup.py` | Searches `Purchase Orders.xlsx`, returns all matching rows |
+| `dymo_printing.py` | Builds PNG labels, duplicate tracking, CUPS print, file cleanup |
+| `approved_excel_files/Purchase Orders.xlsx` | Source of truth for order lookups |
+| `print_jobs.csv` | Append-only log of every label event |
+| `corrections.csv` | Rows needing human review; corrections feed back into AI prompts |
+| `learned_po_patterns.jsonl` | Verified PO→Order matches for improving future extractions |
+| `web_static/` | Frontend HTML, CSS, JS |
+
+---
+
+## Requirements
 
 ```
 pip install -r requirements.txt
 ```
 
-Notes:
-- PDF rendering requires PyMuPDF (`pymupdf`).
-- For better results, supply higher-resolution PDFs or images.
-- SharePoint, Microsoft Graph, authentication, audit logging, and direct printer sending are future production phases, not enabled in this local prototype.
+Requires Ollama running locally with `llama3.1:8b` pulled:
+```
+ollama pull llama3.1:8b
+```
+
+---
+
+## Branches
+
+| Branch | Platform |
+|---|---|
+| `main` | macOS |
+| `windows` | Windows (platform-aware fonts and printing via `pywin32`) |
+
+See `WINDOWS_SETUP.md` on the `windows` branch for setup instructions.
