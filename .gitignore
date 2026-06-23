@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# Runtime data — machine-specific, not shared
+uploads/
+generated_labels/
+print_jobs.csv
+corrections.csv
+learned_po_patterns.jsonl
+invoice_ocr.log

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Invoice OCR Workspace</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 3h7l4 4v14H7z"></path>
+          <path d="M14 3v5h5"></path>
+          <path d="M4 7v14h11"></path>
+          <path d="M9 13h6M9 17h6"></path>
+        </svg>
+        <h1>Invoice OCR Workspace</h1>
+      </div>
+      <div class="local-status"><span></span>Local: http://localhost:7860</div>
+    </header>
+
+    <main class="workspace">
+      <section class="upload-panel" aria-label="Upload invoices">
+        <h2>Upload Invoices</h2>
+        <label class="drop-zone" id="dropZone">
+          <input id="fileInput" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 16V4"></path>
+            <path d="M7 9l5-5 5 5"></path>
+            <path d="M20 16.5a4.5 4.5 0 0 1-4.5 4.5h-7A4.5 4.5 0 0 1 4 16.5c0-2.1 1.4-3.9 3.3-4.4A5.5 5.5 0 0 1 18 10.5c1.2.8 2 2.2 2 3.8v2.2z"></path>
+          </svg>
+          <strong>Drag and drop files here</strong>
+          <span>or click to browse</span>
+          <small>Supports PDF, PNG, JPG, TIFF. Max file size: 50 MB.</small>
+        </label>
+
+        <div class="selected-files" id="selectedFiles"></div>
+
+        <label class="check-row">
+          <input id="excelCheck" type="checkbox" checked>
+          <span>Enable Excel validation</span>
+        </label>
+
+        <label class="check-row">
+          <input id="printerCheck" type="checkbox">
+          <span>Send matched labels to DYMO printer</span>
+        </label>
+
+
+
+        <div class="field compact-field">
+          <label for="printerQueueInput">DYMO Printer Queue Name</label>
+          <input id="printerQueueInput" type="text" placeholder="DYMO_LabelWriter_450" value="DYMO_LabelWriter_450" autocomplete="off">
+        </div>
+
+        <button class="primary-button" id="processButton" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 16V4"></path>
+            <path d="M7 9l5-5 5 5"></path>
+            <path d="M5 20h14"></path>
+          </svg>
+          Process Files
+        </button>
+
+        <p class="note">Files are processed locally. The model receives OCR text only, not file-system access.</p>
+      </section>
+
+      <section class="results-panel" aria-label="Uploaded files and results">
+        <div class="panel-header">
+          <h2>Uploaded Files &amp; Results</h2>
+          <div class="actions">
+            <button class="secondary-button" id="correctionsButton" type="button">Corrections (0)</button>
+            <button class="secondary-button" id="expandButton" type="button" disabled>Expand All</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>File Name</th>
+                <th>Status</th>
+                <th>Invoice Number</th>
+                <th>PO Number</th>
+                <th>Lookup Value</th>
+                <th>Label</th>
+                <th>Processed At</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr class="empty-row">
+                <td colspan="8">Upload invoices to see extracted fields and validation results.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div id="detailsArea" class="details-area"></div>
+
+        <div id="correctionsArea" class="corrections-area hidden">
+          <div class="corrections-header">
+            <h3>Pending Corrections</h3>
+            <button class="secondary-button" id="refreshCorrectionsButton" type="button">Refresh</button>
+          </div>
+          <div id="correctionsList" class="corrections-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
