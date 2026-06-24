@@ -75,12 +75,12 @@ If an order number matches multiple rows in `Purchase Orders.xlsx`, the app gene
 Labels are 54 mm × 70 mm at 300 DPI (landscape). Each label shows:
 
 ```
-ITD Pickup Item
+Pickup Item
 ──────────────
-Order: 11773
-Ticket: RITM0024764
-Dept: ESD
-Requester: Julia Leal
+Order: 123455
+Ticket: REQ0024764
+Dept: EXP
+Requester: John Doe
 Qty: 1
 
 Item:
