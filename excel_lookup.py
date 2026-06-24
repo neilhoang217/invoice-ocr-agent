@@ -12,7 +12,7 @@ NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
 
 # This project only allows Excel access from this one folder.
 # Put Purchase Orders.xlsx here:
-# /Users/neil.hoang/invoice-ocr-agent/approved_excel_files/Purchase Orders.xlsx
+# ./approved_excel_files/Purchase Orders.xlsx
 APPROVED_EXCEL_FOLDER = Path(__file__).resolve().parent / "approved_excel_files"
 PURCHASE_ORDER_EXCEL_FILE = "Purchase Orders.xlsx"
 CURRENT_YEAR_SHEET_NAME = "Current Year"

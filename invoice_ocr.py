@@ -117,7 +117,7 @@ AGENT_EXTRACTION_LESSONS = [
     ),
 ]
 
-VENDOR_SALES_ORDER_PRIORITY = {"COMPUTERLAND", "COMPUTERLAND PACKING SLIP", "COMPUTERLAND INVOICE"}
+VENDOR_SALES_ORDER_PRIORITY = {"COMPUTERLAND", "COMPUTERLAND PACKING SLIP", "COMPUTERLAND INVOICE", "ISSQUARED", "ISSQUARED PACKING LIST"}
 VENDOR_TRACKING_PRIORITY = {"FEDEX"}
 
 # Each entry: (display name, [patterns]) — ALL patterns must match to identify the vendor.
@@ -465,17 +465,19 @@ def get_file_paths():
     return [user_input]
 
 
+def create_ocr_reader():
+    try:
+        return easyocr.Reader(["en"], gpu=True)
+    except Exception:
+        return easyocr.Reader(["en"], gpu=False)
+
+
 def read_image_text(file_path, reader):
-    import numpy as np
     from PIL import ImageOps
 
-    # Honour EXIF rotation first (phone photos often store orientation in metadata).
     image = Image.open(file_path)
     image = ImageOps.exif_transpose(image)
     image_array = np.array(image.convert("RGB"))
-
-    # Also ask EasyOCR to try 90/180/270° rotations so documents that were
-    # physically placed sideways when photographed are still read correctly.
     words = reader.readtext(image_array, detail=0, rotation_info=[90, 180, 270])
     return " ".join(words)
 

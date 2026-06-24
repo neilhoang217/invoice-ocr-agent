@@ -13,8 +13,6 @@ import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import easyocr
-
 import invoice_ocr
 import dymo_printing
 
@@ -62,10 +60,7 @@ def get_ocr_reader():
     if OCR_READER is None:
         with OCR_LOCK:
             if OCR_READER is None:
-                try:
-                    OCR_READER = easyocr.Reader(["en"], gpu=True)
-                except Exception:
-                    OCR_READER = easyocr.Reader(["en"], gpu=False)
+                OCR_READER = invoice_ocr.create_ocr_reader()
     return OCR_READER
 
 
@@ -646,7 +641,10 @@ def main():
     server = ThreadingHTTPServer((DEFAULT_HOST, port), InvoiceOCRHandler)
     print(f"Invoice OCR web app running at http://{DEFAULT_HOST}:{port}")
     print("Press Ctrl+C to stop.")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
 
 
 if __name__ == "__main__":

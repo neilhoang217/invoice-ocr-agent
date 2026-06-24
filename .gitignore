@@ -12,3 +12,6 @@ print_jobs.csv
 corrections.csv
 learned_po_patterns.jsonl
 invoice_ocr.log
+
+# Internal Excel files with org order data
+approved_excel_files/
