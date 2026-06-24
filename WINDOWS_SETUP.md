@@ -1,6 +1,9 @@
 # Windows Setup Guide
 
-Follow these steps in order on the Windows machine.
+## What You Need
+
+- Windows 10 or 11 (64-bit)
+- Internet connection (first run only)
 
 ---
 
@@ -9,90 +12,77 @@ Follow these steps in order on the Windows machine.
 1. Go to https://www.python.org/downloads/
 2. Download the latest **Python 3.11** installer (Windows installer 64-bit)
 3. Run the installer
-4. **Important:** Check the box **"Add Python to PATH"** before clicking Install
-5. Verify it worked — open **Command Prompt** and run:
+4. **Important:** Check **"Add Python to PATH"** before clicking Install
+5. Verify — open **Command Prompt** and run:
    ```
    python --version
    ```
-   You should see something like `Python 3.11.x`
+   You should see `Python 3.11.x`
 
 ---
 
-## Step 2 — Install Git
-
-1. Go to https://git-scm.com/download/win
-2. Download and run the installer (keep all default options)
-3. Verify it worked — open a new **Command Prompt** and run:
-   ```
-   git --version
-   ```
-
----
-
-## Step 3 — Install Ollama
+## Step 2 — Install Ollama
 
 1. Go to https://ollama.com/download
 2. Download the **Windows** installer and run it
-3. After install, open **Command Prompt** and pull the AI model:
+3. After install, open **Command Prompt** and verify:
    ```
-   ollama pull llama3.1:8b
+   ollama --version
    ```
-   This downloads ~5 GB — let it finish before continuing
 
 ---
 
-## Step 4 — Clone the App
+## Step 3 — Copy the App Folder
 
-Open **Command Prompt** and run:
-
-```
-git clone -b windows https://github.com/neilhoang217/invoice-ocr-agent.git
-cd invoice-ocr-agent
-```
+Copy the entire `invoice-ocr-agent` folder to the Windows machine.
 
 ---
 
-## Step 5 — Create a Virtual Environment and Install Dependencies
+## Step 4 — Run First-Time Setup
 
-Still in the `invoice-ocr-agent` folder, run these one at a time:
+Open **Command Prompt**, navigate to the app folder, and run:
 
 ```
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-pip install pywin32
+install.bat
 ```
 
-The `pip install -r requirements.txt` step will take several minutes — EasyOCR downloads large model files.
+This will automatically:
+- Check your internet connection
+- Check Python 3.9+ is installed
+- Create a Python virtual environment
+- Install all Python dependencies (including pywin32 for printing)
+- Verify Ollama is installed
+- Download the AI model (~5 GB — takes a few minutes)
 
 ---
 
-## Step 6 — Copy the Excel File
+## Step 5 — Add Your Excel File
 
-Copy your **Purchase Orders.xlsx** into the `approved_excel_files\` folder inside the project.
+Copy **Purchase Orders.xlsx** into the `approved_excel_files\` folder inside the app.
 
 ---
 
-## Step 7 — Run the App
+## Step 6 — Start the App
 
-Make sure Ollama is running (it should start automatically after install). Then:
+Double-click **run.bat** (or run it from Command Prompt):
 
 ```
-cd invoice-ocr-agent
-venv\Scripts\activate
-python web_app.py
+run.bat
 ```
 
-Open a browser and go to:
+The app will open automatically in your browser at:
 ```
 http://127.0.0.1:7860
 ```
 
+To stop the app, press **Ctrl+C** in the Command Prompt window.
+
 ---
 
-## Step 8 — Printing Setup
+## Printing Setup
 
-- The printer queue name in the app must match exactly what Windows shows under **Settings → Bluetooth & devices → Printers & scanners**
+- The printer queue name in the app must match exactly what Windows shows under:
+  **Settings → Bluetooth & devices → Printers & scanners**
 - Example: `DYMO LabelWriter 450`
 
 ---
@@ -104,5 +94,6 @@ http://127.0.0.1:7860
 | `python` not found | Reinstall Python and check "Add to PATH" |
 | `ollama` not found | Restart Command Prompt after installing Ollama |
 | App says Ollama not running | Open the Ollama app from the Start menu |
-| EasyOCR slow on first run | Normal — it's loading ML models into memory |
+| EasyOCR slow on first run | Normal — loading ML models into memory |
 | Print fails | Check the printer name matches exactly in Windows settings |
+| `install.bat` blocked by antivirus | Right-click → Properties → Unblock, then retry |
