@@ -1,0 +1,92 @@
+================================================
+  Invoice OCR Agent - Setup Guide
+================================================
+
+REQUIREMENTS
+------------
+- macOS
+- Python 3.9 or newer
+- Internet connection (first run only)
+
+
+WHAT TO COPY TO THE NEW MACHINE
+--------------------------------
+Copy the entire invoice-ocr-agent folder.
+You can exclude these folders (they are auto-created):
+  - venv/
+  - uploads/
+  - generated_labels/
+  - .git/
+
+
+FIRST-TIME SETUP
+----------------
+1. Open Terminal
+
+2. Navigate to the invoice-ocr-agent folder:
+      cd /path/to/invoice-ocr-agent
+
+3. Run the install script:
+      bash install.sh
+
+   This will automatically:
+   - Check your internet connection
+   - Check Python 3.9+ is installed
+   - Create a Python virtual environment
+   - Install all Python dependencies
+   - Install Ollama (via Homebrew if available)
+   - Download the AI model (~5 GB, takes a few minutes)
+
+   NOTE: If Homebrew is not installed, the script will give you
+   two options to install Ollama manually. Follow those steps,
+   then run bash install.sh again.
+
+4. Once setup is complete, you will see:
+      Setup complete! Run ./run.sh to start the app.
+
+
+STARTING THE APP (every time)
+------------------------------
+1. Open Terminal
+
+2. Navigate to the invoice-ocr-agent folder:
+      cd /path/to/invoice-ocr-agent
+
+3. Run:
+      ./run.sh
+
+   The app will open automatically in your browser at:
+      http://127.0.0.1:7860
+
+4. To stop the app, press Ctrl+C in the Terminal window.
+
+
+ADDING EXCEL FILES
+------------------
+Place your Excel order files in the approved_excel_files/ folder
+before starting the app. The app reads from this folder for
+order number lookups.
+
+
+TROUBLESHOOTING
+---------------
+- "Python 3 not found"
+    Download and install Python from: https://www.python.org/downloads/
+    Choose version 3.9 or newer. Then run bash install.sh again.
+
+- "Homebrew not found" during Ollama install
+    Option A: Install Homebrew first by running:
+      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    Then run bash install.sh again.
+
+    Option B: Download the Ollama Mac app manually from:
+      https://ollama.com/download
+    Then run bash install.sh again.
+
+- App does not open in browser
+    Manually open your browser and go to: http://127.0.0.1:7860
+
+- Ollama / AI model errors
+    Make sure Ollama is running. You can start it manually with:
+      ollama serve
+    Then run ./run.sh again.

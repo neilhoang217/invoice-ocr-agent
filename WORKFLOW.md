@@ -1,50 +1,84 @@
-# Invoice OCR Agent — Workflow Diagram
+# Invoice OCR Agent — Workflow Diagrams
 
-## Main Processing Flow
+## Invoice Upload Flow
 
 ```mermaid
 flowchart TD
-    A([User uploads invoice\nPDF / PNG / JPG / TIFF]) --> B[POST /api/process]
+    A([User uploads invoice\nPDF / PNG / JPG / TIFF]) --> B[POST /api/process-stream]
 
     B --> C[Save to uploads/ as temp file]
     C --> D{File type?}
     D -- PDF --> E[PyMuPDF renders pages\nEasyOCR reads each page]
-    D -- Image --> F[EasyOCR reads image]
+    D -- Image --> F[EXIF rotation corrected\nEasyOCR reads image at 0/90/180/270°]
     E --> G[Raw OCR text]
     F --> G
 
     G --> H{Ollama running?}
-    H -- Yes --> I[Ollama AI extracts fields\nInvoice No, PO No, Tracking No, etc.]
+    H -- Yes --> I[Ollama extracts fields\nInvoice No, PO No, Tracking No, etc.]
     H -- No --> J[Regex fallback extraction]
-    I --> K[Regex validates & corrects\nPO Number, Order Number]
+    I --> K[Regex validates PO / Order / Tracking]
     J --> K
 
-    K --> L[Excel lookup\napproved_excel_files/Purchase Orders.xlsx]
-    L --> M[Try candidates in order:\n1 PO Number\n2 Order Number\n3 Tracking Number\n4 Invoice Number fallback]
-    M --> N{Match found?}
+    K --> VD[Vendor signature detection\nComputerland / ISSQUARED / FedEx / others\nTRK# label infers FedEx if logo unreadable]
+    VD --> L[Set lookup priority + Excel column by vendor]
+
+    L --> M[Try candidates in order:\nFedEx: Tracking No → PO No  ── Tracking # column\nComputerland: Sales Order → Requisition ── Order Number column\nISSQUARED: Customer PO# ── Order Number column\nOthers: PO No → Order No → Invoice No ── Order Number column]
+    M --> N{Match found in\nPurchase Orders.xlsx?\nOCR Z↔2 O↔0 folding applied}
 
     N -- No --> O[Needs Manual Review\nSave row to corrections.csv]
-    N -- Yes --> P[Ollama AI verifies\nextracted values vs matched row]
+    N -- Yes --> P[ALL matching rows returned\none per ticket]
 
-    P --> Q{Verification status?}
-    Q -- VERIFIED --> R[Save learned PO example\nto learned_po_patterns.jsonl]
-    Q -- NEEDS_REVIEW\nor LIKELY_INCORRECT --> S[Save row to corrections.csv]
+    P --> Q[Ollama verifies extracted\nvalues vs matched row]
+    Q --> R{Verification?}
+    R -- VERIFIED --> S[Save learned PO example\nto learned_po_patterns.jsonl]
+    R -- NEEDS_REVIEW\nor LIKELY_INCORRECT --> T[Save row to corrections.csv]
 
-    R --> T[Build PNG label\nPillow 827x638px at 300 DPI\nITD Pickup Item layout]
-    S --> T
+    S --> LABELS
+    T --> LABELS
     O --> SKIP([Return result — no label])
 
-    T --> U{Duplicate check\nprint_jobs.csv}
-    U -- Already printed --> V[Status: DUPLICATE_BLOCKED\nLog to print_jobs.csv\nLabel file still saved for Print Again]
-    U -- First time --> W{Auto-print enabled?}
+    LABELS[Build one PNG label per matched row\nPillow 827x638px 300 DPI\nITD Pickup Item layout] --> U
 
-    W -- No --> X[Status: LABEL_GENERATED\nLog to print_jobs.csv]
-    W -- Yes --> Y[Send PNG to DYMO via CUPS\nlp -d queue -o PageSize=w154h198]
-    Y --> Z[Status: LABEL_SENT_TO_PRINTER\nLog to print_jobs.csv]
+    U{Duplicate check\nprint_jobs.csv} -- Already printed --> V[DUPLICATE_BLOCKED\nLog to print_jobs.csv]
+    U -- File exists, not printed --> W[Return existing file\nno regeneration]
+    U -- First time --> X{Auto-print enabled?}
 
-    V --> RESULT([Return JSON result to browser])
-    X --> RESULT
-    Z --> RESULT
+    X -- No --> Y[LABEL_GENERATED\nLog to print_jobs.csv\nFile saved in generated_labels/]
+    X -- Yes --> Z[Send PNG to DYMO via CUPS\nlp -d queue -o PageSize=w154h198]
+    Z --> AA[LABEL_SENT_TO_PRINTER\nLog to print_jobs.csv\nPNG file deleted]
+
+    V --> RESULT
+    W --> RESULT
+    Y --> RESULT
+    AA --> RESULT([SSE event streamed to browser\nper file as it completes])
+```
+
+---
+
+## Manual Order Lookup Flow
+
+```mermaid
+flowchart TD
+    A([User enters order number\nclicks Look Up & Print]) --> B[POST /api/lookup\norder_number, send_to_printer, printer_queue]
+
+    B --> C[Search Purchase Orders.xlsx\nOrder Number column first\nthen Tracking # column as fallback]
+    C --> D{Match found?}
+
+    D -- No --> ERR([Return no match error])
+    D -- Yes --> E[Return ALL matching rows\none per ticket]
+
+    E --> F[Build one label per row\nduplicate check per row]
+    F --> G{Auto-print enabled?}
+
+    G -- No --> H[LABEL_GENERATED\nFile saved in generated_labels/\nPrint button shown per row]
+    G -- Yes --> I[Send each label to DYMO\nPNG file deleted after print]
+
+    H --> RESULT([Return records + label results\nto browser])
+    I --> RESULT
+
+    RESULT --> J([User clicks Print button\nper row if needed])
+    J --> K[POST /api/print\nlabel_path, printer_queue]
+    K --> L[Send to DYMO\nPNG file deleted\nLog LABEL_SENT_TO_PRINTER]
 ```
 
 ---
@@ -53,20 +87,36 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A([User clicks Print Label\nor Print Again button]) --> B[POST /api/print\nlabel_path, printer_queue, override_duplicate]
+    A([User clicks Print Label\nor Print button]) --> B[POST /api/print\nlabel_path, printer_queue, override_duplicate]
 
     B --> C{Label file exists?}
     C -- No --> ERR1([404 File not found])
     C -- Yes --> D{override_duplicate = true?}
 
-    D -- Yes --> PRINT[Send PNG to DYMO via CUPS\nlp -d queue -o PageSize=w154h198]
+    D -- Yes --> PRINT
     D -- No --> E{Already printed?\ncheck print_jobs.csv}
 
-    E -- Yes --> ERR2([409 Already printed\nButton changes to Print Again])
-    E -- No --> PRINT
+    E -- Yes --> ERR2([409 Duplicate blocked])
+    E -- No --> PRINT[Send PNG to DYMO via CUPS]
 
     PRINT --> F[Log LABEL_SENT_TO_PRINTER\nto print_jobs.csv]
-    F --> OK([200 Sent to printer])
+    F --> G[Delete PNG file\nfrom generated_labels/]
+    G --> OK([200 Sent to printer])
+```
+
+---
+
+## Correction Learning Loop
+
+```mermaid
+flowchart TD
+    A[Lookup fails or AI not VERIFIED] --> B[Row saved to corrections.csv]
+    B --> C([User opens Corrections panel\nin web app])
+    C --> D[User enters corrected\nlookup value and notes]
+    D --> E[POST /api/corrections\nSave corrected values]
+    E --> F[Next invoice upload\nloads recent corrections]
+    F --> G[Corrections included\nin Ollama extraction prompt]
+    G --> H[Better extraction\non similar invoices]
 ```
 
 ---
@@ -75,13 +125,13 @@ flowchart TD
 
 | File | Role |
 |---|---|
-| `web_app.py` | HTTP server, routes, concurrent file processing |
-| `invoice_ocr.py` | OCR reading, field extraction, Ollama prompts, Excel lookup orchestration |
-| `excel_lookup.py` | Searches `Purchase Orders.xlsx` Current Year sheet |
-| `dymo_printing.py` | Builds PNG label, duplicate tracking, CUPS print command |
+| `web_app.py` | HTTP server, API routes, SSE streaming, concurrent processing |
+| `invoice_ocr.py` | OCR, field extraction, vendor detection, Ollama prompts, lookup orchestration |
+| `excel_lookup.py` | Searches `Purchase Orders.xlsx`, returns all matching rows |
+| `dymo_printing.py` | Builds PNG labels, duplicate tracking, CUPS print, file cleanup after print |
 | `approved_excel_files/Purchase Orders.xlsx` | Source of truth for order lookups |
 | `print_jobs.csv` | Append-only log of every label event (generated, sent, blocked) |
-| `corrections.csv` | Rows needing human review; corrected rows feed back into AI prompts |
+| `corrections.csv` | Rows needing human review; completed corrections feed into AI prompts |
 | `learned_po_patterns.jsonl` | Verified PO→Order matches used to improve future AI extractions |
-| `generated_labels/` | Saved PNG label files |
+| `generated_labels/` | Temporary PNG label files (deleted after successful print) |
 | `web_static/` | Frontend HTML, CSS, JS |

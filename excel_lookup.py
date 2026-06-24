@@ -12,7 +12,7 @@ NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
 
 # This project only allows Excel access from this one folder.
 # Put Purchase Orders.xlsx here:
-# /Users/neil.hoang/invoice-ocr-agent/approved_excel_files/Purchase Orders.xlsx
+# ./approved_excel_files/Purchase Orders.xlsx
 APPROVED_EXCEL_FOLDER = Path(__file__).resolve().parent / "approved_excel_files"
 PURCHASE_ORDER_EXCEL_FILE = "Purchase Orders.xlsx"
 CURRENT_YEAR_SHEET_NAME = "Current Year"
@@ -20,6 +20,7 @@ MIN_PARTIAL_MATCH_LENGTH = 5
 
 # These are the Excel columns this module knows how to search.
 ORDER_NUMBER_COLUMN_NAMES = ["Order Number", "Order No", "Order #", "Order number"]
+TRACKING_NUMBER_COLUMN_NAMES = ["Tracking #", "Tracking Number", "Tracking No.", "Track #", "TRK#"]
 
 
 logging.basicConfig(
@@ -69,6 +70,16 @@ def normalize_value(value):
     return "".join(character for character in value if character.isalnum())
 
 
+# Maps visually ambiguous OCR characters to a canonical form so that, e.g.,
+# "ORD-16625-M7VZB1" (OCR misread Z for 2) matches "ORD-16625-M7V2B1".
+_OCR_CHAR_TABLE = str.maketrans("ZO", "20")
+
+
+def ocr_normalize(normalized_value):
+    """Apply OCR character confusion folding on top of normalize_value output."""
+    return normalized_value.translate(_OCR_CHAR_TABLE)
+
+
 def normalize_header(value):
     if pd.isna(value):
         return ""
@@ -84,13 +95,20 @@ def values_match(document_value, excel_value):
     if document_value == excel_value:
         return True
 
-    # OCR can include extra punctuation or surrounding text, so allow a
-    # normalized partial match.
     shorter_length = min(len(document_value), len(excel_value))
     if shorter_length < MIN_PARTIAL_MATCH_LENGTH:
         return False
 
-    return document_value in excel_value or excel_value in document_value
+    if document_value in excel_value or excel_value in document_value:
+        return True
+
+    # OCR commonly confuses visually similar characters (e.g., Z↔2, O↔0).
+    # Fold both sides and try again so "M7VZB1" matches "M7V2B1".
+    doc_ocr = ocr_normalize(document_value)
+    exc_ocr = ocr_normalize(excel_value)
+    if doc_ocr == exc_ocr:
+        return True
+    return doc_ocr in exc_ocr or exc_ocr in doc_ocr
 
 
 def find_column(dataframe, possible_names):
@@ -132,7 +150,7 @@ def load_purchase_order_excel():
             raise
 
 
-def lookup_po_number(po_number=None):
+def lookup_po_number(po_number=None, column_names=None):
     # The AI model should only give us extracted text values.
     # Python owns this lookup step and decides whether the Excel file has a match.
     document_po = normalize_value(po_number)
@@ -147,16 +165,20 @@ def lookup_po_number(po_number=None):
             "record": None,
         }
 
+    if column_names is None:
+        column_names = ORDER_NUMBER_COLUMN_NAMES
+
     try:
         dataframe = load_purchase_order_excel()
 
-        order_number_column = find_column(dataframe, ORDER_NUMBER_COLUMN_NAMES)
+        order_number_column = find_column(dataframe, column_names)
+        column_label = column_names[0] if column_names else "Order Number"
 
         if order_number_column is None:
-            logger.warning("Purchase order Excel is missing the Order Number column.")
+            logger.warning("Purchase order Excel is missing the %s column.", column_label)
             return {
                 "status": NEEDS_MANUAL_REVIEW,
-                "message": "Purchase Orders.xlsx Current Year sheet is missing an Order Number column.",
+                "message": f"Purchase Orders.xlsx Current Year sheet is missing a {column_label} column.",
                 "matched_by": None,
                 "matched_row_number": None,
                 "record": None,
@@ -167,16 +189,22 @@ def lookup_po_number(po_number=None):
         matched_indices = dataframe.index[match_mask]
 
         if len(matched_indices) > 0:
-            row_index = matched_indices[0]
-            row = dataframe.loc[row_index]
-            matched_by = "Order Number"
-            logger.info("Excel match found by %s.", matched_by)
+            all_records = [
+                {
+                    "matched_row_number": int(idx) + 2,
+                    "record": dataframe.loc[idx].fillna("").to_dict(),
+                }
+                for idx in matched_indices
+            ]
+            first = all_records[0]
+            logger.info("Excel match found by %s. %d row(s).", column_label, len(all_records))
             return {
                 "status": MATCH_FOUND,
-                "message": f"Matched extracted lookup value against Excel {matched_by}.",
-                "matched_by": matched_by,
-                "matched_row_number": int(row_index) + 2,
-                "record": row.fillna("").to_dict(),
+                "message": f"Matched extracted lookup value against Excel {column_label}. {len(all_records)} row(s) found.",
+                "matched_by": column_label,
+                "matched_row_number": first["matched_row_number"],
+                "record": first["record"],
+                "all_records": all_records,
             }
 
         logger.info("No Excel match found.")

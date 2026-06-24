@@ -13,8 +13,6 @@ import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import easyocr
-
 import invoice_ocr
 import dymo_printing
 
@@ -62,10 +60,7 @@ def get_ocr_reader():
     if OCR_READER is None:
         with OCR_LOCK:
             if OCR_READER is None:
-                try:
-                    OCR_READER = easyocr.Reader(["en"], gpu=True)
-                except Exception:
-                    OCR_READER = easyocr.Reader(["en"], gpu=False)
+                OCR_READER = invoice_ocr.create_ocr_reader()
     return OCR_READER
 
 
@@ -113,7 +108,7 @@ def error_result(file_name, message):
         "fields": {},
         "lookup_result": None,
         "verification_result": None,
-        "label_result": None,
+        "label_results": [],
         "final_status": "Needs Manual Review",
         "processed_at": time.strftime("%I:%M:%S %p"),
     }
@@ -126,29 +121,33 @@ def format_error(error):
     return error.__class__.__name__
 
 
-def summarize_matched_record(lookup_result):
-    record = (lookup_result or {}).get("record") or {}
+def summarize_matched_records(lookup_result):
     wanted_columns = ["Ticket", "Dept", "Requester", "Qty", "Item"]
-    return {
-        column_name: invoice_ocr.get_record_value(record, column_name)
-        for column_name in wanted_columns
-    }
+    all_records = (lookup_result or {}).get("all_records") or []
+    if not all_records:
+        record = (lookup_result or {}).get("record") or {}
+        if record:
+            all_records = [{"record": record}]
+    return [
+        {col: invoice_ocr.get_record_value(match["record"], col) for col in wanted_columns}
+        for match in all_records
+    ]
 
 
 def get_final_status(result):
     if not result.get("ok"):
         return "Needs Manual Review"
 
-    label_status = (result.get("label_result") or {}).get("status")
+    statuses = [r.get("status") for r in (result.get("label_results") or [])]
     lookup_status = (result.get("lookup_result") or {}).get("status")
 
-    if label_status == dymo_printing.LABEL_SENT_TO_PRINTER:
+    if dymo_printing.LABEL_SENT_TO_PRINTER in statuses:
         return "Label Sent to Printer"
-    if label_status == dymo_printing.LABEL_GENERATED:
+    if dymo_printing.LABEL_GENERATED in statuses:
         return "Label Generated"
-    if label_status == dymo_printing.DUPLICATE_BLOCKED:
+    if dymo_printing.DUPLICATE_BLOCKED in statuses:
         return "Duplicate Print Blocked"
-    if label_status == dymo_printing.PRINT_FAILED:
+    if dymo_printing.PRINT_FAILED in statuses:
         return "Print Failed"
     if lookup_status == "MATCH_FOUND":
         return "Order Found"
@@ -173,6 +172,10 @@ def process_uploaded_file(
         else:
             ocr_text = invoice_ocr.read_image_text(str(upload_path), reader)
 
+    print("\n===== RAW OCR TEXT =====")
+    print(ocr_text)
+    print("========================\n")
+
     learned_po_examples, correction_examples = get_cached_examples()
 
     fields = invoice_ocr.extract_fields(
@@ -184,7 +187,7 @@ def process_uploaded_file(
 
     lookup_result = None
     verification_result = None
-    label_result = None
+    label_results = []
 
     if use_excel:
         lookup_result = invoice_ocr.lookup_order_candidates(fields)
@@ -226,7 +229,7 @@ def process_uploaded_file(
                 )
 
         with WRITE_LOCK:
-            label_result = dymo_printing.create_and_maybe_print_label(
+            label_results = dymo_printing.create_and_maybe_print_label(
                 source_file=original_name,
                 fields=fields,
                 lookup_result=lookup_result,
@@ -241,8 +244,8 @@ def process_uploaded_file(
         "fields": fields,
         "lookup_result": lookup_result,
         "verification_result": verification_result,
-        "label_result": label_result,
-        "matched_record_summary": summarize_matched_record(lookup_result),
+        "label_results": label_results,
+        "matched_record_summaries": summarize_matched_records(lookup_result),
         "processed_at": time.strftime("%I:%M:%S %p"),
         "duplicate_warning": f"Previously seen in {duplicate_source}" if duplicate_source else None,
     }
@@ -285,6 +288,8 @@ class InvoiceOCRHandler(SimpleHTTPRequestHandler):
                 self.handle_print_request()
             elif self.path == "/api/corrections":
                 self.handle_corrections_post()
+            elif self.path == "/api/lookup":
+                self.handle_lookup_request()
             else:
                 json_response(self, 404, {"ok": False, "error": "Unknown endpoint."})
         except Exception as error:
@@ -340,6 +345,7 @@ class InvoiceOCRHandler(SimpleHTTPRequestHandler):
 
         try:
             dymo_printing.print_existing_label(label_path, printer_queue)
+            label_path.unlink(missing_ok=True)
             if duplicate_key:
                 with WRITE_LOCK:
                     dymo_printing.append_print_log({
@@ -348,11 +354,62 @@ class InvoiceOCRHandler(SimpleHTTPRequestHandler):
                         "duplicate_key": duplicate_key,
                         "label_path": str(label_path),
                         "printer_queue": printer_queue,
-                        "message": f"Label manually sent to printer queue {printer_queue}.",
+                        "message": f"Label manually sent to printer queue {printer_queue} and file cleaned up.",
                     })
             json_response(self, 200, {"ok": True, "message": f"Label sent to {printer_queue}."})
         except Exception as error:
             json_response(self, 500, {"ok": False, "error": f"Print failed: {format_error(error)}"})
+
+    def handle_lookup_request(self):
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        if content_length <= 0:
+            json_response(self, 400, {"ok": False, "error": "Empty request body."})
+            return
+
+        try:
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            json_response(self, 400, {"ok": False, "error": "Invalid JSON."})
+            return
+
+        order_number = str(body.get("order_number") or "").strip()
+        send_to_printer = bool(body.get("send_to_printer", False))
+        printer_queue = str(body.get("printer_queue") or "").strip()
+
+        if not order_number:
+            json_response(self, 400, {"ok": False, "error": "order_number is required."})
+            return
+
+        from excel_lookup import lookup_po_number, TRACKING_NUMBER_COLUMN_NAMES
+        lookup_result = lookup_po_number(order_number)
+        if lookup_result.get("status") != "MATCH_FOUND":
+            lookup_result = lookup_po_number(order_number, column_names=TRACKING_NUMBER_COLUMN_NAMES)
+
+        if lookup_result.get("status") != "MATCH_FOUND":
+            json_response(self, 200, {"ok": False, "error": f"No match found for '{order_number}'."})
+            return
+
+        with WRITE_LOCK:
+            label_results = dymo_printing.create_and_maybe_print_label(
+                source_file=f"manual-lookup-{order_number}",
+                fields={"Lookup Value": order_number, "Lookup Value Source": "Manual"},
+                lookup_result=lookup_result,
+                send_to_printer=send_to_printer,
+                printer_queue=printer_queue,
+            )
+
+        wanted = ["Ticket", "Dept", "Requester", "Qty", "Item"]
+        records = [
+            {col: invoice_ocr.get_record_value(m["record"], col) for col in wanted}
+            for m in (lookup_result.get("all_records") or [{"record": lookup_result.get("record")}])
+        ]
+
+        json_response(self, 200, {
+            "ok": True,
+            "order_number": order_number,
+            "records": records,
+            "label_results": label_results,
+        })
 
     def handle_process_request(self):
         content_length = int(self.headers.get("Content-Length", "0") or "0")
@@ -584,7 +641,10 @@ def main():
     server = ThreadingHTTPServer((DEFAULT_HOST, port), InvoiceOCRHandler)
     print(f"Invoice OCR web app running at http://{DEFAULT_HOST}:{port}")
     print("Press Ctrl+C to stop.")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
 
 
 if __name__ == "__main__":

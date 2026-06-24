@@ -284,6 +284,41 @@ button:disabled {
   line-height: 1.6;
 }
 
+.divider {
+  margin: 32px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.manual-lookup-result {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.manual-lookup-result.hidden { display: none; }
+.manual-lookup-result.success { border-color: #4caf50; background: #f6fff6; }
+.manual-lookup-result.error   { border-color: #e57373; background: #fff6f6; }
+
+.manual-lookup-result table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.manual-lookup-result th,
+.manual-lookup-result td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.manual-lookup-result th { font-weight: 600; }
+
 .results-panel {
   min-width: 0;
 }

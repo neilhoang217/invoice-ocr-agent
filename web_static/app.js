@@ -4,6 +4,9 @@ const selectedFiles = document.querySelector("#selectedFiles");
 const excelCheck = document.querySelector("#excelCheck");
 const printerCheck = document.querySelector("#printerCheck");
 const printerQueueInput = document.querySelector("#printerQueueInput");
+const manualOrderInput = document.querySelector("#manualOrderInput");
+const manualLookupButton = document.querySelector("#manualLookupButton");
+const manualLookupResult = document.querySelector("#manualLookupResult");
 const processButton = document.querySelector("#processButton");
 const resultsBody = document.querySelector("#resultsBody");
 const detailsArea = document.querySelector("#detailsArea");
@@ -123,8 +126,8 @@ function renderDetail(result, index) {
   const active = expandedIndexes.has(index) ? "active" : "";
   const lookup = result.lookup_result || {};
   const verification = result.verification_result || {};
-  const label = result.label_result || {};
-  const summary = result.matched_record_summary || {};
+  const labelResults = result.label_results || [];
+  const summaries = result.matched_record_summaries || [];
 
   const dupWarning = result.duplicate_warning
     ? `<p class="duplicate-notice">${escapeHtml(result.duplicate_warning)}</p>`
@@ -171,14 +174,16 @@ function renderDetail(result, index) {
       </div>
       <section class="matched-row">
         <h3>Label & Print Status</h3>
-        <div class="kv-list">
-          ${kv("Final Status", result.final_status || "Needs Manual Review")}
-          ${kv("Label Status", label.status || "SKIPPED")}
-          ${kv("Label File", label.label_path || "-")}
-          ${kv("Print Message", label.message || "-")}
-          ${kv("Duplicate Key", label.duplicate_key || "-")}
-        </div>
-        ${label.label_path ? `<button class="secondary-button print-label-button" type="button" data-label-path="${escapeHtml(label.label_path)}" data-override="${label.status === "DUPLICATE_BLOCKED" ? "true" : "false"}">${label.status === "DUPLICATE_BLOCKED" ? "Print Again" : "Print Label"}</button>` : ""}
+        ${kv("Final Status", result.final_status || "Needs Manual Review")}
+        ${labelResults.map((label, i) => `
+          <div class="label-result-block">
+            <div class="kv-list">
+              ${kv(`Label ${labelResults.length > 1 ? i + 1 : ""}Status`.trim(), label.status || "SKIPPED")}
+              ${kv("Print Message", label.message || "-")}
+            </div>
+            ${label.label_path ? `<button class="secondary-button print-label-button" type="button" data-label-path="${escapeHtml(label.label_path)}" data-override="${label.status === "DUPLICATE_BLOCKED" ? "true" : "false"}">${label.status === "DUPLICATE_BLOCKED" ? "Print Again" : "Print Label"}</button>` : ""}
+          </div>
+        `).join("")}
       </section>
       <section class="matched-row">
         <h3>Matched Row Details</h3>
@@ -188,13 +193,15 @@ function renderDetail(result, index) {
               <tr><th>Ticket</th><th>Dept</th><th>Requester</th><th>Qty</th><th>Item</th></tr>
             </thead>
             <tbody>
-              <tr>
-                <td>${escapeHtml(summary.Ticket || "-")}</td>
-                <td>${escapeHtml(summary.Dept || "-")}</td>
-                <td>${escapeHtml(summary.Requester || "-")}</td>
-                <td>${escapeHtml(summary.Qty || "-")}</td>
-                <td>${escapeHtml(summary.Item || "-")}</td>
-              </tr>
+              ${summaries.map(s => `
+                <tr>
+                  <td>${escapeHtml(s.Ticket || "-")}</td>
+                  <td>${escapeHtml(s.Dept || "-")}</td>
+                  <td>${escapeHtml(s.Requester || "-")}</td>
+                  <td>${escapeHtml(s.Qty || "-")}</td>
+                  <td>${escapeHtml(s.Item || "-")}</td>
+                </tr>
+              `).join("")}
             </tbody>
           </table>
         </div>
@@ -205,11 +212,13 @@ function renderDetail(result, index) {
 
 function labelSummary(result) {
   if (result.pending) return "-";
-  const label = result.label_result || {};
-  if (label.status === "LABEL_SENT_TO_PRINTER") return "Sent";
-  if (label.status === "LABEL_GENERATED") return "Generated";
-  if (label.status === "DUPLICATE_BLOCKED") return "Duplicate blocked";
-  if (label.status === "PRINT_FAILED") return "Print failed";
+  const labels = result.label_results || [];
+  const count = labels.length;
+  const statuses = labels.map(l => l.status);
+  if (statuses.includes("LABEL_SENT_TO_PRINTER")) return count > 1 ? `Sent (${count})` : "Sent";
+  if (statuses.includes("LABEL_GENERATED")) return count > 1 ? `Generated (${count})` : "Generated";
+  if (statuses.includes("DUPLICATE_BLOCKED")) return "Duplicate blocked";
+  if (statuses.includes("PRINT_FAILED")) return "Print failed";
   if (result.lookup_result?.status === "MATCH_FOUND") return "Ready";
   return "-";
 }
@@ -513,4 +522,120 @@ detailsArea.addEventListener("click", async (event) => {
   } finally {
     button.disabled = false;
   }
+});
+
+// ── Manual order lookup ───────────────────────────────────────────────────────
+
+async function manualLookup() {
+  const orderNumber = manualOrderInput.value.trim();
+  if (!orderNumber) {
+    manualLookupResult.className = "manual-lookup-result error";
+    manualLookupResult.innerHTML = "Enter an order number first.";
+    return;
+  }
+
+  manualLookupButton.disabled = true;
+  manualLookupButton.textContent = "Looking up…";
+  manualLookupResult.className = "manual-lookup-result hidden";
+
+  try {
+    const response = await fetch("/api/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        order_number: orderNumber,
+        send_to_printer: printerCheck.checked,
+        printer_queue: printerQueueInput.value.trim(),
+      }),
+    });
+
+    const data = await response.json().catch(() => ({ ok: false, error: "Server error." }));
+
+    if (!data.ok) {
+      manualLookupResult.className = "manual-lookup-result error";
+      manualLookupResult.innerHTML = escapeHtml(data.error || "No match found.");
+      return;
+    }
+
+    const rows = data.records || [];
+    const labels = data.label_results || [];
+
+    manualLookupResult.className = "manual-lookup-result success";
+    manualLookupResult.innerHTML = `
+      <strong>${rows.length} match${rows.length !== 1 ? "es" : ""} found for order ${escapeHtml(orderNumber)}</strong>
+      <table>
+        <thead>
+          <tr><th>#</th><th>Ticket</th><th>Dept</th><th>Requester</th><th>Qty</th><th>Item</th><th>Label</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${rows.map((r, i) => {
+            const label = labels[i] || {};
+            const canPrint = !!label.label_path;
+            return `<tr>
+              <td>${i + 1}</td>
+              <td>${escapeHtml(r.Ticket || "-")}</td>
+              <td>${escapeHtml(r.Dept || "-")}</td>
+              <td>${escapeHtml(r.Requester || "-")}</td>
+              <td>${escapeHtml(r.Qty || "-")}</td>
+              <td>${escapeHtml(r.Item || "-")}</td>
+              <td>${escapeHtml(label.status || "-")}</td>
+              <td>${canPrint ? `<button class="secondary-button manual-print-button" type="button" data-label-path="${escapeHtml(label.label_path)}">${label.status === "DUPLICATE_BLOCKED" ? "Print Again" : "Print"}</button>` : "-"}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  } catch {
+    manualLookupResult.className = "manual-lookup-result error";
+    manualLookupResult.innerHTML = "Could not reach the server.";
+  } finally {
+    manualLookupButton.disabled = false;
+    manualLookupButton.textContent = "Look Up & Print";
+  }
+}
+
+manualLookupButton.addEventListener("click", manualLookup);
+manualOrderInput.addEventListener("keydown", (e) => { if (e.key === "Enter") manualLookup(); });
+
+manualLookupResult.addEventListener("click", async (event) => {
+  const button = event.target.closest(".manual-print-button");
+  if (!button) return;
+
+  const labelPath = button.dataset.labelPath;
+  const printerQueue = printerQueueInput.value.trim();
+  if (!printerQueue) {
+    button.textContent = "Enter queue name first";
+    setTimeout(() => { button.textContent = "Print"; }, 2500);
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Printing…";
+
+  try {
+    const response = await fetch("/api/print", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label_path: labelPath, printer_queue: printerQueue, override_duplicate: false }),
+    });
+    const data = await response.json().catch(() => ({ ok: false, error: "Server error." }));
+    if (data.duplicate_blocked) {
+      button.textContent = "Already printed";
+      button.dataset.labelPath = "";
+    } else if (data.ok) {
+      button.textContent = "Sent!";
+      button.dataset.labelPath = "";
+      setTimeout(() => { button.disabled = true; button.textContent = "Printed"; }, 2000);
+      return;
+    } else {
+      button.textContent = `Failed: ${data.error}`;
+      setTimeout(() => { button.textContent = "Print"; button.disabled = false; }, 3000);
+      return;
+    }
+  } catch {
+    button.textContent = "Network error";
+    setTimeout(() => { button.textContent = "Print"; button.disabled = false; }, 3000);
+    return;
+  }
+  button.disabled = false;
 });

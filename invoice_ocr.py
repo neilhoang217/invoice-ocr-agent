@@ -14,7 +14,7 @@ import easyocr
 import numpy as np
 from PIL import Image
 
-from excel_lookup import lookup_po_number
+from excel_lookup import lookup_po_number, TRACKING_NUMBER_COLUMN_NAMES
 
 DEFAULT_MODEL = "llama3.1:8b"
 LEARNED_PO_PATTERNS_FILE = "learned_po_patterns.jsonl"
@@ -42,6 +42,7 @@ CORRECTION_FIELD_NAMES = [
 ]
 
 AGENT_EXTRACTION_LESSONS = [
+    # --- General PO / Invoice rules ---
     (
         "If an invoice has a P.O. # / PO Number header but the cell below it is blank, "
         "do not use nearby table text such as Sales Rep. Name, Sales1, Ship Date, Terms, "
@@ -52,22 +53,82 @@ AGENT_EXTRACTION_LESSONS = [
         "a blank P.O. # field with Invoice # INV1048 should use INV1048."
     ),
     (
-        "For Computerland packing slips, the Sales Order number is the preferred lookup value. "
-        "Extract it into the Order Number field even if a PO Number is also present."
+        "City purchase order numbers are typically 5–6 digits (e.g., 546010, 67031) or "
+        "hyphenated (e.g., 67030-11959, 67030-4955). If you see a number in this format "
+        "next to a PO/P.O./Purchase Order label, it is almost certainly the city's PO Number."
+    ),
+    # --- Computerland ---
+    (
+        "For Computerland packing slips, the 'Sales order' value (e.g., 'ORD-16625-M7V2B1') is "
+        "the primary lookup value — extract it into the Order Number field. "
+        "The format is always ORD-NNNNN-XXXXXX (digits, dash, alphanumeric). "
+        "OCR may confuse '2' with 'Z' or 'O' with '0' — read each character carefully. "
+        "If a 'Requisition' number is also present (e.g., 'Requisition: 67030-4955'), extract "
+        "it into the PO Number field as a fallback lookup."
+    ),
+    # --- FedEx shipping labels ---
+    (
+        "For FedEx shipping labels, the tracking number is labeled 'TRK#' followed by "
+        "space-separated digit groups (e.g., 'TRK#:5263 3769 1880'). "
+        "Extract only the digits without spaces into Tracking Number (e.g., '526337691880'). "
+        "OCR sometimes reads 'TRK#' as 'TRKH' or 'TRK' — look for any variant near the large digits."
+    ),
+    (
+        "For FedEx shipping labels, the 'Order#' field (e.g., 'Order#: 917994866', or OCR may "
+        "read it as 'Ordern; 917994866') is the SHIPPER's internal order reference — it belongs "
+        "to the vendor (e.g., B&H Photo), NOT to the city. Do NOT put it in the Order Number field. "
+        "Leave Order Number as 'Needs Manual Review'."
+    ),
+    (
+        "For FedEx shipping labels, 'PO#: 546010' is the city's Purchase Order reference — "
+        "extract it into the PO Number field. "
+        "OCR sometimes misreads 'PO#' as 'PC' — if you see 'PC: NNNNNN' near the bottom of a "
+        "FedEx label, treat it as the PO Number."
+    ),
+    (
+        "For FedEx shipping labels, 'REF:OP 67031' in the TO address block contains a city "
+        "order reference number (e.g., 67031). If no other PO is found, extract the number "
+        "after 'REF:OP' into the PO Number field."
     ),
     (
         "For FedEx documents (proof-of-delivery, invoices), the FedEx Tracking Number is the "
         "preferred lookup value. Extract it into the Tracking Number field."
     ),
+    # --- ISSQUARED ---
+    (
+        "For ISSQUARED packing lists, the 'Customer PO#' field (e.g., 'Customer PO#: 67030-11959') "
+        "is the PO Number. Extract it into the PO Number field. "
+        "The format is typically NNNNN-NNNNN (two groups of digits separated by a dash). "
+        "It also appears as 'PL Note 1: 67030-11959' at the bottom of the page — same value."
+    ),
+    (
+        "For ISSQUARED packing lists, carton detail lines may contain a FedEx Track# "
+        "(e.g., 'Track# 526661585750') and the document may say 'SHIPPED VIA: FedEx Ground'. "
+        "These are shipment carrier details — do NOT treat the document as a FedEx document. "
+        "Vendor Name is 'ISSQUARED', and the primary lookup value is the Customer PO#, not the track number."
+    ),
+    # --- Vendor Name ---
+    (
+        "Vendor Name should be the company that ISSUED or SHIPPED the document — the letterhead, "
+        "the FROM address, or the carrier. For FedEx shipping labels, Vendor Name is 'FedEx', "
+        "not the department that received the package (e.g., not 'Information Technology'). "
+        "For Computerland documents, Vendor Name is 'Computerland'. "
+        "For ISSQUARED documents, Vendor Name is 'ISSQUARED'."
+    ),
 ]
 
-VENDOR_SALES_ORDER_PRIORITY = {"COMPUTERLAND"}
+VENDOR_SALES_ORDER_PRIORITY = {"COMPUTERLAND", "COMPUTERLAND PACKING SLIP", "COMPUTERLAND INVOICE", "ISSQUARED", "ISSQUARED PACKING LIST"}
 VENDOR_TRACKING_PRIORITY = {"FEDEX"}
 
-# Each entry: (display name, regex that identifies this vendor from letterhead/branding text)
+# Each entry: (display name, [patterns]) — ALL patterns must match to identify the vendor.
+# More specific entries (more patterns) must come before broader fallbacks.
 VENDOR_SIGNATURES = [
-    ("Computerland", r"\bcomputerland\b"),
-    ("FedEx",        r"\bfed\s*ex\b"),
+    ("Computerland Packing Slip", [r"\bcomputerland\b", r"\bpacking\s+slip\b"]),
+    ("Computerland Invoice",      [r"\bcomputerland\b", r"\binvoice\b"]),
+    ("Computerland",              [r"\bcomputerland\b"]),
+    ("ISSQUARED Packing List",    [r"\bissquared\b", r"\bpacking\s+list\b"]),
+    ("ISSQUARED",                 [r"\bissquared\b"]),
+    ("FedEx",                     [r"\bfed\s*ex\b"]),
 ]
 
 # PyMuPDF is only needed when the input file is a PDF.
@@ -109,6 +170,12 @@ PO_NUMBER_PATTERNS = [
     r"\bpurchase\s+order\s*(?:number|no\.?|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,})\b",
     r"\bp\s*\.?\s*[o0]\s*\.?\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,})\b",
     r"\bp\s*\.?\s*[o0]\s*\.?\s+([A-Z0-9][A-Z0-9-]{2,})\b",
+    # Computerland packing slip requisition number — used as PO Number fallback
+    r"\brequisition\s*(?:number|no\.?|#)?\s*[:#-]?\s*([0-9][A-Z0-9-]{3,})\b",
+    # FedEx label "PC: 546010" — OCR misread of "PO#: 546010" at bottom of label
+    r"\bPC\s*[:#-]\s*([0-9]{4,})\b",
+    # FedEx label "REF:OP 67031" in the TO address — city order reference fallback
+    r"\bREF\s*[:#-]?\s*OP\s+([0-9]{4,})\b",
 ]
 
 INVOICE_NUMBER_PATTERNS = [
@@ -127,14 +194,17 @@ ORDER_NUMBER_PATTERNS = [
 ]
 
 TRACKING_NUMBER_PATTERNS = [
+    # FedEx shipping label: "TRK#: 5263 3769 1880"
+    # OCR often misreads "#" as "H" or drops it entirely — accept both.
+    r"\bTRK\s*[#H]?\s*[:#.]?\s*(\d[\d ]{10,16}\d)\b",
     r"\b(?:fedex\s+)?tracking\s*(?:number|no\.?|#)?\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
     r"\bproof-of-delivery\s+for\s+tracking\s+number\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
 ]
 
 def detect_vendor_from_text(text):
-    """Return a vendor display name if a known vendor signature is found in the OCR text."""
-    for vendor_name, pattern in VENDOR_SIGNATURES:
-        if re.search(pattern, text, re.IGNORECASE):
+    """Return a vendor display name if all patterns for a known vendor are found in the OCR text."""
+    for vendor_name, patterns in VENDOR_SIGNATURES:
+        if all(re.search(p, text, re.IGNORECASE) for p in patterns):
             return vendor_name
     return None
 
@@ -395,11 +465,20 @@ def get_file_paths():
     return [user_input]
 
 
-def read_image_text(file_path, reader):
-    # EasyOCR reads the image and returns a list of detected text pieces.
-    words = reader.readtext(file_path, detail=0)
+def create_ocr_reader():
+    try:
+        return easyocr.Reader(["en"], gpu=True)
+    except Exception:
+        return easyocr.Reader(["en"], gpu=False)
 
-    # Join the pieces into one long string so it is easier to search later.
+
+def read_image_text(file_path, reader):
+    from PIL import ImageOps
+
+    image = Image.open(file_path)
+    image = ImageOps.exif_transpose(image)
+    image_array = np.array(image.convert("RGB"))
+    words = reader.readtext(image_array, detail=0, rotation_info=[90, 180, 270])
     return " ".join(words)
 
 
@@ -493,8 +572,12 @@ def extract_tracking_number_from_text(text):
     for pattern in TRACKING_NUMBER_PATTERNS:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
-            return match.group(1).strip(" .,:;")
-
+            value = match.group(1).strip(" .,:;")
+            # TRK# format produces space-separated digit groups — compact to one number
+            compact = re.sub(r"\s+", "", value)
+            if compact.isdigit():
+                value = compact
+            return value
     return "Needs Manual Review"
 
 
@@ -522,7 +605,8 @@ def get_lookup_candidates(results):
     if tracking_first:
         add_lookup_candidate(candidates, results.get("Tracking Number"), "FedEx Tracking Number")
         add_lookup_candidate(candidates, results.get("PO Number"), "PO Number")
-        add_lookup_candidate(candidates, results.get("Order Number"), "Sales Order")
+        # Order Number is deliberately excluded for FedEx — it's the shipper's
+        # internal reference (e.g., B&H Order#) and is not in the city's Excel.
     elif sales_order_first:
         add_lookup_candidate(candidates, results.get("Order Number"), "Sales Order")
         add_lookup_candidate(candidates, results.get("PO Number"), "PO Number")
@@ -580,11 +664,18 @@ def validate_po_number(results, text):
     if not is_missing_value(text_invoice_number):
         results["Invoice Number"] = text_invoice_number
 
-    if is_missing_value(results.get("Vendor Name")):
-        detected_vendor = detect_vendor_from_text(text)
-        if detected_vendor:
-            results["Vendor Name"] = detected_vendor
-            debug_print(f"Vendor detected from document signature: {detected_vendor}")
+    # Always run signature detection — it overrides whatever the AI guessed because
+    # the AI often reads the shipper name (e.g., "B&H Photo Video") instead of the
+    # carrier/vendor we care about for lookup priority (e.g., "FedEx").
+    detected_vendor = detect_vendor_from_text(text)
+    if detected_vendor:
+        results["Vendor Name"] = detected_vendor
+        debug_print(f"Vendor detected from document signature: {detected_vendor}")
+    elif not is_missing_value(text_tracking_number) and re.search(r"\bTRK\b", text, re.IGNORECASE):
+        # TRK# is a FedEx-specific label format — infer vendor even when the
+        # stylized FedEx logo isn't readable by OCR.
+        results["Vendor Name"] = "FedEx"
+        debug_print("Vendor inferred as FedEx from TRK# label in text.")
 
     results = set_lookup_value_from_candidates(results)
 
@@ -659,16 +750,55 @@ Rules:
 - If a value is missing or unclear, use "Needs Manual Review".
 - Do not guess values that are not in the OCR text.
 - Keep dates, money amounts, and tracking numbers exactly as written when possible.
-- If a number appears directly under or immediately after the standalone word INVOICE, treat that number as the Invoice Number.
-- If INVOICE is a large heading and the nearby field label says Number, treat that nearby Number value as the Invoice Number.
-- Pay extra attention to the PO Number. It may be labeled PO, P.O. NO., P.O. #, Purchase Order, Customer PO, or Customer P.O.
-- The PO Number must be the value shown next to a PO/P.O./Purchase Order label.
-- Delivery receipts and packing slips may use Sales order as the order lookup value. Keep it in the Order Number field.
-- FedEx proof-of-delivery documents may use Tracking number as a lookup value. Keep it in the Tracking Number field.
-- If no PO/P.O./Purchase Order label exists, leave PO Number as "Needs Manual Review". Python will try Order Number, then Tracking Number, then Invoice Number as separate lookup values.
-- Do not use the item number, ticket/RITM/SCTASK number, tracking number, date, quantity, or dollar amount as the PO Number.
 - If both a PO Number and an Order Number appear, keep them in their separate JSON fields.
-- For Vendor Name, look at the document letterhead or branding at the top of the page, not just a "Vendor Name:" label. For example, if the document header says "Computerland" or "FedEx", set Vendor Name accordingly.
+- Do not use item number, ticket/RITM/SCTASK number, date, quantity, or dollar amount as the PO Number.
+
+PO Number rules:
+- PO Number may be labeled: PO, P.O., PO#, P.O. #, P.O. NO., Purchase Order, Customer PO, Customer P.O., or Cust PO.
+- City purchase order numbers are typically 5–6 digits (e.g., 546010, 67031) or hyphenated (e.g., 67030-11959).
+- If the PO field header exists but the value below it is blank, do not fill it from nearby unrelated fields.
+- If no PO label exists, leave PO Number as "Needs Manual Review".
+
+Invoice Number rules:
+- If a number appears directly under or immediately after the standalone word INVOICE, treat it as the Invoice Number.
+- If INVOICE is a large heading and a nearby field says Number, that value is the Invoice Number.
+- If no PO Number is found, the Invoice Number may be used as a fallback lookup value.
+
+Tracking Number rules:
+- FedEx shipping labels: tracking number follows "TRK#" in space-separated groups (e.g., "TRK#:5263 3769 1880"). Extract digits only, no spaces → "526337691880".
+- OCR may read "TRK#" as "TRKH" or "TRK" — still extract the digit groups that follow.
+- FedEx proof-of-delivery and invoices may also contain a tracking number — extract it into Tracking Number.
+- UPS tracking numbers start with "1Z" (e.g., "1Z999AA10123456784").
+- Do NOT use barcode digit strings (e.g., "9632 0019 6 000 000 0000 ...") as the tracking number unless they match TRK# or a known carrier format.
+
+Order Number rules (Sales Order):
+- Computerland packing slips: "Sales order" field contains an ORD-XXXXX-XXXXXX value (e.g., "ORD-16625-M7V2B1"). Extract into Order Number.
+- OCR may confuse "2" with "Z" or "0" with "O" in these codes — read carefully.
+- Delivery receipts and packing slips may use Sales order as the order lookup value.
+
+Vendor-specific rules:
+
+COMPUTERLAND PACKING SLIP:
+- Order Number → "Sales order" value (e.g., "ORD-16625-M7V2B1")
+- PO Number → "Requisition" number if present (e.g., "67030-4955")
+- Vendor Name → "Computerland"
+
+ISSQUARED PACKING LIST:
+- PO Number → "Customer PO#" value (e.g., "67030-11959")
+- Vendor Name → "ISSQUARED"
+
+FEDEX SHIPPING LABEL:
+- Tracking Number → digits after "TRK#" (e.g., "526337691880")
+- PO Number → "PO#" value (e.g., "546010"). OCR may misread "PO#" as "PC" — if you see "PC: NNNNNN" at the bottom, treat it as PO Number.
+- PO Number fallback → number after "REF:OP" in the TO address (e.g., "REF:OP 67031" → PO Number "67031")
+- Order Number → leave as "Needs Manual Review". The "Order#" field on FedEx labels (e.g., "917994866") is the SHIPPER's internal reference, not a city order.
+- Vendor Name → "FedEx" (not the receiving department like "Information Technology")
+
+Vendor Name rules:
+- Set Vendor Name to the company that issued or shipped the document (letterhead, FROM address, carrier name).
+- For FedEx labels, Vendor Name is "FedEx" — not the TO: recipient department.
+- For Computerland documents, Vendor Name is "Computerland".
+- For ISSQUARED documents, Vendor Name is "ISSQUARED".
 
 Successful PO extraction examples learned from previous workbook matches:
 {learned_examples_text}
@@ -991,7 +1121,8 @@ def lookup_order_candidates(results):
     for candidate in candidates:
         debug_print(f"\nTrying Lookup Value: {candidate['value']}")
         debug_print(f"Lookup Value Source: {candidate['source']}")
-        lookup_result = lookup_po_number(po_number=candidate["value"])
+        col_names = TRACKING_NUMBER_COLUMN_NAMES if candidate["source"] == "FedEx Tracking Number" else None
+        lookup_result = lookup_po_number(po_number=candidate["value"], column_names=col_names)
         lookup_result["lookup_value"] = candidate["value"]
         lookup_result["lookup_value_source"] = candidate["source"]
 

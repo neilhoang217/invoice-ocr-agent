@@ -1,8 +1,8 @@
-easyocr
-pillow
-numpy
-pandas
-pymupdf
-openpyxl
+easyocr==1.7.2
+pillow==11.3.0
+numpy==2.0.2
+pandas==2.3.3
+PyMuPDF==1.26.5
+openpyxl==3.1.5
 # Windows only — required for label printing:
 # pywin32
