@@ -107,18 +107,37 @@ AGENT_EXTRACTION_LESSONS = [
         "These are shipment carrier details — do NOT treat the document as a FedEx document. "
         "Vendor Name is 'ISSQUARED', and the primary lookup value is the Customer PO#, not the track number."
     ),
+    # --- UPS shipping labels ---
+    (
+        "For UPS shipping labels, the tracking number is labeled 'TRACKING #:' followed by "
+        "space-separated alphanumeric groups starting with '1Z' (e.g., 'TRACKING #: 1Z Y14 65V 13 5855 1332'). "
+        "Extract all groups joined without spaces into Tracking Number (e.g., '1ZY1465V1358551332'). "
+        "A standard UPS tracking number is exactly 18 characters: '1Z' + 6 shipper + 2 service + 8 package."
+    ),
+    (
+        "For UPS shipping labels, the 'Po #' or 'PO#' field (e.g., 'Po #:W1659824937') is the "
+        "shipper's reference number — it may be a vendor's web order number (e.g., Walmart 'W...' prefix), "
+        "NOT a city purchase order. Leave PO Number as 'Needs Manual Review' unless the value "
+        "matches a city PO format (5–6 digits, or hyphenated). "
+        "The Tracking Number is the primary lookup value for UPS shipments."
+    ),
+    (
+        "For UPS shipping labels, 'WEB ORDER #:' is the vendor's internal web order number — "
+        "do NOT extract it as the Order Number. Leave Order Number as 'Needs Manual Review'."
+    ),
     # --- Vendor Name ---
     (
         "Vendor Name should be the company that ISSUED or SHIPPED the document — the letterhead, "
         "the FROM address, or the carrier. For FedEx shipping labels, Vendor Name is 'FedEx', "
         "not the department that received the package (e.g., not 'Information Technology'). "
+        "For UPS shipping labels, Vendor Name is 'UPS'. "
         "For Computerland documents, Vendor Name is 'Computerland'. "
         "For ISSQUARED documents, Vendor Name is 'ISSQUARED'."
     ),
 ]
 
 VENDOR_SALES_ORDER_PRIORITY = {"COMPUTERLAND", "COMPUTERLAND PACKING SLIP", "COMPUTERLAND INVOICE", "ISSQUARED", "ISSQUARED PACKING LIST"}
-VENDOR_TRACKING_PRIORITY = {"FEDEX"}
+VENDOR_TRACKING_PRIORITY = {"FEDEX", "UPS"}
 
 # Each entry: (display name, [patterns]) — ALL patterns must match to identify the vendor.
 # More specific entries (more patterns) must come before broader fallbacks.
@@ -129,6 +148,7 @@ VENDOR_SIGNATURES = [
     ("ISSQUARED Packing List",    [r"\bissquared\b", r"\bpacking\s+list\b"]),
     ("ISSQUARED",                 [r"\bissquared\b"]),
     ("FedEx",                     [r"\bfed\s*ex\b"]),
+    ("UPS",                       [r"\bups\b"]),
 ]
 
 # PyMuPDF is only needed when the input file is a PDF.
@@ -197,6 +217,9 @@ TRACKING_NUMBER_PATTERNS = [
     # FedEx shipping label: "TRK#: 5263 3769 1880"
     # OCR often misreads "#" as "H" or drops it entirely — accept both.
     r"\bTRK\s*[#H]?\s*[:#.]?\s*(\d[\d ]{10,16}\d)\b",
+    # UPS tracking number: starts with "1Z" followed by exactly 16 alphanumeric chars.
+    # OCR often inserts spaces between groups (e.g., "1Z Y14 65V 13 5855 1332").
+    r"\btracking\s*(?:number|no\.?|#)?\s*[:#-]?\s*(1Z(?: *[A-Z0-9]){16})\b",
     r"\b(?:fedex\s+)?tracking\s*(?:number|no\.?|#)?\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
     r"\bproof-of-delivery\s+for\s+tracking\s+number\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
 ]
@@ -573,9 +596,9 @@ def extract_tracking_number_from_text(text):
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             value = match.group(1).strip(" .,:;")
-            # TRK# format produces space-separated digit groups — compact to one number
             compact = re.sub(r"\s+", "", value)
-            if compact.isdigit():
+            # Compact digit-only groups (FedEx TRK#) and UPS 1Z strings that OCR spaces out
+            if compact.isdigit() or compact.upper().startswith("1Z"):
                 value = compact
             return value
     return "Needs Manual Review"
@@ -602,11 +625,16 @@ def get_lookup_candidates(results):
     sales_order_first = any(name in vendor for name in VENDOR_SALES_ORDER_PRIORITY)
     tracking_first = any(name in vendor for name in VENDOR_TRACKING_PRIORITY)
 
-    if tracking_first:
-        add_lookup_candidate(candidates, results.get("Tracking Number"), "FedEx Tracking Number")
+    has_tracking = not is_missing_value(results.get("Tracking Number"))
+    has_po = not is_missing_value(results.get("PO Number"))
+
+    if has_tracking and has_po:
+        # Any shipping carrier (FedEx, UPS, USPS, etc.): tracking number takes priority
+        add_lookup_candidate(candidates, results.get("Tracking Number"), "Tracking Number")
         add_lookup_candidate(candidates, results.get("PO Number"), "PO Number")
-        # Order Number is deliberately excluded for FedEx — it's the shipper's
-        # internal reference (e.g., B&H Order#) and is not in the city's Excel.
+        if not tracking_first:
+            # Non-FedEx carriers may also have a useful Order Number as a third fallback
+            add_lookup_candidate(candidates, results.get("Order Number"), "Sales Order")
     elif sales_order_first:
         add_lookup_candidate(candidates, results.get("Order Number"), "Sales Order")
         add_lookup_candidate(candidates, results.get("PO Number"), "PO Number")
@@ -794,9 +822,17 @@ FEDEX SHIPPING LABEL:
 - Order Number → leave as "Needs Manual Review". The "Order#" field on FedEx labels (e.g., "917994866") is the SHIPPER's internal reference, not a city order.
 - Vendor Name → "FedEx" (not the receiving department like "Information Technology")
 
+UPS SHIPPING LABEL:
+- Tracking Number → alphanumeric groups after "TRACKING #:" starting with "1Z", joined without spaces (e.g., "TRACKING #: 1Z Y14 65V 13 5855 1332" → "1ZY1465V1358551332"). Always 18 chars: "1Z" + 6 shipper + 2 service + 8 package.
+- PO Number → leave as "Needs Manual Review". The "Po #" on UPS labels is a vendor reference (e.g., a Walmart "W..." web order number), NOT a city PO number.
+- Order Number → leave as "Needs Manual Review". "WEB ORDER #:" is the vendor's internal order number, not a city order.
+- Invoice Number → leave as "Needs Manual Review". UPS shipping labels do not have invoice numbers.
+- Vendor Name → "UPS"
+
 Vendor Name rules:
 - Set Vendor Name to the company that issued or shipped the document (letterhead, FROM address, carrier name).
 - For FedEx labels, Vendor Name is "FedEx" — not the TO: recipient department.
+- For UPS labels, Vendor Name is "UPS".
 - For Computerland documents, Vendor Name is "Computerland".
 - For ISSQUARED documents, Vendor Name is "ISSQUARED".
 
@@ -1121,7 +1157,7 @@ def lookup_order_candidates(results):
     for candidate in candidates:
         debug_print(f"\nTrying Lookup Value: {candidate['value']}")
         debug_print(f"Lookup Value Source: {candidate['source']}")
-        col_names = TRACKING_NUMBER_COLUMN_NAMES if candidate["source"] == "FedEx Tracking Number" else None
+        col_names = TRACKING_NUMBER_COLUMN_NAMES if candidate["source"] == "Tracking Number" else None
         lookup_result = lookup_po_number(po_number=candidate["value"], column_names=col_names)
         lookup_result["lookup_value"] = candidate["value"]
         lookup_result["lookup_value_source"] = candidate["source"]

@@ -210,7 +210,7 @@ def lookup_po_number(po_number=None, column_names=None):
         logger.info("No Excel match found.")
         return {
             "status": NO_MATCH,
-            "message": "No Current Year order number matched the extracted lookup value.",
+            "message": f"No Current Year {column_label} matched the extracted lookup value.",
             "matched_by": None,
             "matched_row_number": None,
             "record": None,
