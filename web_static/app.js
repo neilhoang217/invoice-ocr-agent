@@ -634,11 +634,7 @@ async function manualLookup() {
     const response = await fetch("/api/lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        order_number: orderNumber,
-        send_to_printer: printerCheck.checked,
-        printer_queue: printerQueueInput.value.trim(),
-      }),
+      body: JSON.stringify({ order_number: orderNumber }),
     });
 
     const data = await response.json().catch(() => ({ ok: false, error: "Server error." }));
@@ -655,34 +651,36 @@ async function manualLookup() {
     manualLookupResult.className = "manual-lookup-result success";
     manualLookupResult.innerHTML = `
       <strong>${rows.length} match${rows.length !== 1 ? "es" : ""} found for order ${escapeHtml(orderNumber)}</strong>
-      <table>
-        <thead>
-          <tr><th>#</th><th>Ticket</th><th>Dept</th><th>Requester</th><th>Qty</th><th>Item</th><th>Label</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${rows.map((r, i) => {
-            const label = labels[i] || {};
-            const canPrint = !!label.label_path;
-            return `<tr>
-              <td>${i + 1}</td>
-              <td>${escapeHtml(r.Ticket || "-")}</td>
-              <td>${escapeHtml(r.Dept || "-")}</td>
-              <td>${escapeHtml(r.Requester || "-")}</td>
-              <td>${escapeHtml(r.Qty || "-")}</td>
-              <td>${escapeHtml(r.Item || "-")}</td>
-              <td>${escapeHtml(label.status || "-")}</td>
-              <td>${canPrint ? `<button class="secondary-button manual-print-button" type="button" data-label-path="${escapeHtml(label.label_path)}">${label.status === "DUPLICATE_BLOCKED" ? "Print Again" : "Print"}</button>` : "-"}</td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Ticket</th><th>Dept</th><th>Requester</th><th>Qty</th><th>Item</th><th>Label</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${rows.map((r, i) => {
+              const label = labels[i] || {};
+              const canPrint = !!label.label_path;
+              return `<tr>
+                <td>${i + 1}</td>
+                <td>${escapeHtml(r.Ticket || "-")}</td>
+                <td>${escapeHtml(r.Dept || "-")}</td>
+                <td>${escapeHtml(r.Requester || "-")}</td>
+                <td>${escapeHtml(r.Qty || "-")}</td>
+                <td>${escapeHtml(r.Item || "-")}</td>
+                <td>${escapeHtml(label.status || "-")}</td>
+                <td>${canPrint ? `<button class="secondary-button manual-print-button" type="button" data-label-path="${escapeHtml(label.label_path)}">${label.status === "DUPLICATE_BLOCKED" ? "Print Again" : "Print"}</button>` : "-"}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
   } catch {
     manualLookupResult.className = "manual-lookup-result error";
     manualLookupResult.innerHTML = "Could not reach the server.";
   } finally {
     manualLookupButton.disabled = false;
-    manualLookupButton.textContent = "Look Up & Print";
+    manualLookupButton.textContent = "Look Up";
   }
 }
 

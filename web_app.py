@@ -254,6 +254,13 @@ def process_uploaded_file(
 
 
 class InvoiceOCRHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        # Without this, browsers may serve stale HTML/CSS/JS from heuristic
+        # cache after a file changes on disk, since SimpleHTTPRequestHandler
+        # doesn't send a Cache-Control header by default.
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        super().end_headers()
+
     def translate_path(self, path):
         path = path.split("?", 1)[0].split("#", 1)[0]
         if path == "/":

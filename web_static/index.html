@@ -68,16 +68,6 @@
         </button>
 
         <p class="note">Files are processed locally. The model receives OCR text only, not file-system access.</p>
-
-        <hr class="divider">
-
-        <h2>Manual Order Lookup</h2>
-        <div class="field compact-field">
-          <label for="manualOrderInput">Order Number</label>
-          <input id="manualOrderInput" type="text" placeholder="e.g. 11773" autocomplete="off">
-        </div>
-        <button class="primary-button" id="manualLookupButton" type="button">Look Up &amp; Print</button>
-        <div id="manualLookupResult" class="manual-lookup-result hidden"></div>
       </section>
 
       <section class="results-panel" aria-label="Uploaded files and results">
@@ -122,6 +112,18 @@
         </div>
       </section>
     </main>
+
+    <section class="lookup-panel" aria-label="Manual order lookup">
+      <h2>Manual Order Lookup</h2>
+      <div class="lookup-controls">
+        <div class="field compact-field">
+          <label for="manualOrderInput">Order Number</label>
+          <input id="manualOrderInput" type="text" placeholder="e.g. 11773" autocomplete="off">
+        </div>
+        <button class="primary-button" id="manualLookupButton" type="button">Look Up</button>
+      </div>
+      <div id="manualLookupResult" class="manual-lookup-result hidden"></div>
+    </section>
 
     <div id="webcamModal" class="webcam-modal hidden">
       <div class="webcam-dialog">
