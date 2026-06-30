@@ -15,6 +15,16 @@ const correctionsButton = document.querySelector("#correctionsButton");
 const correctionsArea = document.querySelector("#correctionsArea");
 const correctionsList = document.querySelector("#correctionsList");
 const refreshCorrectionsButton = document.querySelector("#refreshCorrectionsButton");
+const webcamButton = document.querySelector("#webcamButton");
+const webcamModal = document.querySelector("#webcamModal");
+const webcamVideo = document.querySelector("#webcamVideo");
+const webcamPreview = document.querySelector("#webcamPreview");
+const webcamCanvas = document.querySelector("#webcamCanvas");
+const webcamError = document.querySelector("#webcamError");
+const webcamCaptureButton = document.querySelector("#webcamCaptureButton");
+const webcamRetakeButton = document.querySelector("#webcamRetakeButton");
+const webcamUseButton = document.querySelector("#webcamUseButton");
+const webcamCancelButton = document.querySelector("#webcamCancelButton");
 
 let chosenFiles = [];
 let latestResults = [];
@@ -57,6 +67,82 @@ function renderSelectedFiles() {
 function setFiles(files) {
   chosenFiles = Array.from(files || []);
   renderSelectedFiles();
+}
+
+// ── Webcam capture ─────────────────────────────────────────────────────────────
+
+let webcamStream = null;
+let webcamCapturedBlob = null;
+
+function setWebcamControlsState(captured) {
+  webcamVideo.classList.toggle("hidden", captured);
+  webcamPreview.classList.toggle("hidden", !captured);
+  webcamCaptureButton.classList.toggle("hidden", captured);
+  webcamRetakeButton.classList.toggle("hidden", !captured);
+  webcamUseButton.classList.toggle("hidden", !captured);
+}
+
+async function openWebcam() {
+  webcamCapturedBlob = null;
+  webcamError.classList.add("hidden");
+  webcamError.textContent = "";
+  setWebcamControlsState(false);
+  webcamModal.classList.remove("hidden");
+
+  try {
+    webcamStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false,
+    });
+    webcamVideo.srcObject = webcamStream;
+  } catch (error) {
+    webcamError.textContent = `Could not access the webcam: ${error.message || error.name || "permission denied."}`;
+    webcamError.classList.remove("hidden");
+  }
+}
+
+function closeWebcam() {
+  if (webcamStream) {
+    webcamStream.getTracks().forEach((track) => track.stop());
+    webcamStream = null;
+  }
+  webcamVideo.srcObject = null;
+  if (webcamPreview.src) {
+    URL.revokeObjectURL(webcamPreview.src);
+    webcamPreview.removeAttribute("src");
+  }
+  webcamCapturedBlob = null;
+  webcamModal.classList.add("hidden");
+}
+
+function captureWebcamPhoto() {
+  if (!webcamVideo.videoWidth || !webcamVideo.videoHeight) return;
+  webcamCanvas.width = webcamVideo.videoWidth;
+  webcamCanvas.height = webcamVideo.videoHeight;
+  webcamCanvas.getContext("2d").drawImage(webcamVideo, 0, 0);
+  webcamCanvas.toBlob((blob) => {
+    if (!blob) return;
+    webcamCapturedBlob = blob;
+    webcamPreview.src = URL.createObjectURL(blob);
+    setWebcamControlsState(true);
+  }, "image/jpeg", 0.92);
+}
+
+function retakeWebcamPhoto() {
+  if (webcamPreview.src) {
+    URL.revokeObjectURL(webcamPreview.src);
+    webcamPreview.removeAttribute("src");
+  }
+  webcamCapturedBlob = null;
+  setWebcamControlsState(false);
+}
+
+function useWebcamPhoto() {
+  if (!webcamCapturedBlob) return;
+  const file = new File([webcamCapturedBlob], `webcam-${Date.now()}.jpg`, { type: "image/jpeg" });
+  chosenFiles = chosenFiles.concat([file]);
+  renderSelectedFiles();
+  closeWebcam();
 }
 
 function safeFileName(name) {
@@ -427,6 +513,12 @@ async function saveCorrection(card) {
 // ── Event listeners ───────────────────────────────────────────────────────────
 
 fileInput.addEventListener("change", () => setFiles(fileInput.files));
+
+webcamButton.addEventListener("click", openWebcam);
+webcamCancelButton.addEventListener("click", closeWebcam);
+webcamCaptureButton.addEventListener("click", captureWebcamPhoto);
+webcamRetakeButton.addEventListener("click", retakeWebcamPhoto);
+webcamUseButton.addEventListener("click", useWebcamPhoto);
 
 dropZone.addEventListener("dragover", (event) => {
   event.preventDefault();

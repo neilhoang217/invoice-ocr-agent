@@ -162,6 +162,78 @@ h2 {
   line-height: 1.7;
 }
 
+.webcam-row {
+  margin: -8px 0 18px;
+}
+
+.webcam-row .secondary-button {
+  width: 100%;
+  height: 40px;
+}
+
+.webcam-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(23, 32, 51, 0.55);
+  z-index: 100;
+}
+
+.webcam-modal.hidden {
+  display: none;
+}
+
+.webcam-dialog {
+  width: 100%;
+  max-width: 560px;
+  padding: 22px;
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(23, 32, 51, 0.25);
+}
+
+.webcam-dialog h3 {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 760;
+}
+
+.webcam-video {
+  width: 100%;
+  max-height: 60vh;
+  background: #11161f;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.webcam-error {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid #f1a5af;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.webcam-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.webcam-controls .primary-button,
+.webcam-controls .secondary-button {
+  width: auto;
+  height: 44px;
+  margin-top: 0;
+  padding: 0 18px;
+}
+
 .selected-files {
   display: none;
   margin-bottom: 18px;

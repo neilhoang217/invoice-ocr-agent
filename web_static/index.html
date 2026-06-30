@@ -35,6 +35,10 @@
           <small>Supports PDF, PNG, JPG, TIFF. Max file size: 50 MB.</small>
         </label>
 
+        <div class="webcam-row">
+          <button class="secondary-button" id="webcamButton" type="button">Use Webcam</button>
+        </div>
+
         <div class="selected-files" id="selectedFiles"></div>
 
         <label class="check-row">
@@ -118,6 +122,23 @@
         </div>
       </section>
     </main>
+
+    <div id="webcamModal" class="webcam-modal hidden">
+      <div class="webcam-dialog">
+        <h3>Capture Photo</h3>
+        <video id="webcamVideo" class="webcam-video" autoplay playsinline></video>
+        <img id="webcamPreview" class="webcam-video hidden" alt="Captured photo preview">
+        <p id="webcamError" class="webcam-error hidden"></p>
+        <div class="webcam-controls">
+          <button class="secondary-button" id="webcamCancelButton" type="button">Cancel</button>
+          <button class="secondary-button hidden" id="webcamRetakeButton" type="button">Retake</button>
+          <button class="primary-button" id="webcamCaptureButton" type="button">Capture Photo</button>
+          <button class="primary-button hidden" id="webcamUseButton" type="button">Use Photo</button>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="webcamCanvas" class="hidden"></canvas>
 
     <script src="/app.js"></script>
   </body>
