@@ -69,9 +69,12 @@ AGENT_EXTRACTION_LESSONS = [
     # --- FedEx shipping labels ---
     (
         "For FedEx shipping labels, the tracking number is labeled 'TRK#' followed by "
-        "space-separated digit groups (e.g., 'TRK#:5263 3769 1880'). "
-        "Extract only the digits without spaces into Tracking Number (e.g., '526337691880'). "
-        "OCR sometimes reads 'TRK#' as 'TRKH' or 'TRK' — look for any variant near the large digits."
+        "space-separated digit groups (e.g., 'TRK# 5240 8101 8783'). "
+        "Extract only the TRK# digits without spaces into Tracking Number (e.g., '524081018783'). "
+        "OCR sometimes reads 'TRK#' as 'TRKH' or 'TRK' — look for any variant near the 12-digit groups. "
+        "FedEx labels also contain a GS1 barcode row like '9622 0019 0 (000 000 0000) 0 00 5240 8101 8783' — "
+        "NEVER extract any portion of this row (e.g., '9622...', '8962...') as the tracking number. "
+        "Only the number after the TRK# label is the tracking number."
     ),
     (
         "For FedEx shipping labels, the 'Order#' field (e.g., 'Order#: 917994866', or OCR may "
@@ -146,9 +149,9 @@ VENDOR_SIGNATURES = [
     ("Computerland Invoice",      [r"\bcomputerland\b", r"\binvoice\b"]),
     ("Computerland",              [r"\bcomputerland\b"]),
     ("ISSQUARED Packing List",    [r"\bissquared\b", r"\bpacking\s+list\b"]),
-    ("ISSQUARED",                 [r"\bissquared\b"]),
     ("FedEx",                     [r"\bfed\s*ex\b"]),
     ("UPS",                       [r"\bups\b"]),
+    ("ISSQUARED",                 [r"\bissquared\b"]),
 ]
 
 # PyMuPDF is only needed when the input file is a PDF.
@@ -187,6 +190,10 @@ FIELD_NAMES = [field_name for field_name, pattern in FIELDS]
 
 PO_NUMBER_PATTERNS = [
     r"\bcustomer\s+p\s*\.?\s*[o0]\s*\.?\s*(?:number|no\.?|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,})\b",
+    # ISSQUARED packing lists repeat the Customer PO# as "PL Note 1: 67030-11959"
+    # at the bottom of the page — a second chance to recover it if the
+    # "Customer PO#" label itself was misread by OCR.
+    r"\bPL\s*Note\s*1\s*[:#-]?\s*([0-9]{4,6}-[0-9]{4,6})\b",
     r"\bpurchase\s+order\s*(?:number|no\.?|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,})\b",
     r"\bp\s*\.?\s*[o0]\s*\.?\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,})\b",
     r"\bp\s*\.?\s*[o0]\s*\.?\s+([A-Z0-9][A-Z0-9-]{2,})\b",
@@ -214,14 +221,19 @@ ORDER_NUMBER_PATTERNS = [
 ]
 
 TRACKING_NUMBER_PATTERNS = [
-    # FedEx shipping label: "TRK#: 5263 3769 1880"
-    # OCR often misreads "#" as "H" or drops it entirely — accept both.
-    r"\bTRK\s*[#H]?\s*[:#.]?\s*(\d[\d ]{10,16}\d)\b",
     # UPS tracking number: starts with "1Z" followed by exactly 16 alphanumeric chars.
     # OCR often inserts spaces between groups (e.g., "1Z Y14 65V 13 5855 1332").
     r"\btracking\s*(?:number|no\.?|#)?\s*[:#-]?\s*(1Z(?: *[A-Z0-9]){16})\b",
     r"\b(?:fedex\s+)?tracking\s*(?:number|no\.?|#)?\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
     r"\bproof-of-delivery\s+for\s+tracking\s+number\s*[:#-]?\s*([0-9]{10,22}|[A-Z0-9][A-Z0-9-]{8,})\b",
+]
+
+FEDEX_TRK_PATTERNS = [
+    # Normal OCR order: "TRK# 5240 8101 8783"
+    r"\bTRK\s*[#H:]?\s*[:#.]?\s*((?:\d{4}\s+){2}\d{4})\b",
+    # Photo OCR sometimes reads left-to-right by visual baseline and returns
+    # "5240 8101 8783 TRK#" because the TRK# label sits to the left of the number.
+    r"\b((?:\d{4}\s+){2}\d{4})\s+TRK\s*[#H:]?\b",
 ]
 
 def detect_vendor_from_text(text):
@@ -230,23 +242,6 @@ def detect_vendor_from_text(text):
         if all(re.search(p, text, re.IGNORECASE) for p in patterns):
             return vendor_name
     return None
-
-
-PO_REJECT_PREFIXES = (
-    "SALES",
-    "SHIP",
-    "TERMS",
-    "DUE",
-    "DATE",
-    "DESCRIPTION",
-    "QUANTITY",
-    "UNIT",
-    "LINE",
-    "TOTAL",
-    "PRICE",
-    "BILL",
-    "INVOICE",
-)
 
 
 def is_missing_value(value):
@@ -551,9 +546,14 @@ def is_valid_po_candidate(value):
     if len(normalized_value) < 2:
         return False
 
-    return not any(
-        normalized_value.startswith(reject_prefix) for reject_prefix in PO_REJECT_PREFIXES
-    )
+    if not re.search(r"\d", normalized_value):
+        return False
+
+    # City PO numbers are digits only (5-6 digits, or two hyphenated digit
+    # groups, per AGENT_EXTRACTION_LESSONS). Letters here usually mean OCR/AI
+    # blended in a neighboring field (e.g. a vendor part number) next to the
+    # PO label, rather than reading a real PO number.
+    return not re.search(r"[A-Z]", normalized_value)
 
 
 def is_valid_invoice_candidate(value):
@@ -591,7 +591,20 @@ def extract_order_number_from_text(text):
     return "Needs Manual Review"
 
 
+def extract_fedex_trk_number_from_text(text):
+    for pattern in FEDEX_TRK_PATTERNS:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return re.sub(r"\s+", "", match.group(1))
+
+    return "Needs Manual Review"
+
+
 def extract_tracking_number_from_text(text):
+    fedex_tracking_number = extract_fedex_trk_number_from_text(text)
+    if not is_missing_value(fedex_tracking_number):
+        return fedex_tracking_number
+
     for pattern in TRACKING_NUMBER_PATTERNS:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
@@ -619,6 +632,19 @@ def add_lookup_candidate(candidates, value, source):
     candidates.append({"value": str(value).strip(), "source": source})
 
 
+def merge_lookup_candidates(first_candidates, second_candidates):
+    merged = []
+    for candidate in list(first_candidates or []) + list(second_candidates or []):
+        add_lookup_candidate(merged, candidate.get("value"), candidate.get("source"))
+    return merged
+
+
+def should_force_tracking_first(results):
+    vendor = str(results.get("Vendor Name") or "").upper()
+    tracking_first = any(name in vendor for name in VENDOR_TRACKING_PRIORITY)
+    return tracking_first and not is_missing_value(results.get("Tracking Number"))
+
+
 def get_lookup_candidates(results):
     candidates = []
     vendor = str(results.get("Vendor Name") or "").upper()
@@ -628,13 +654,10 @@ def get_lookup_candidates(results):
     has_tracking = not is_missing_value(results.get("Tracking Number"))
     has_po = not is_missing_value(results.get("PO Number"))
 
-    if has_tracking and has_po:
-        # Any shipping carrier (FedEx, UPS, USPS, etc.): tracking number takes priority
+    if tracking_first and has_tracking:
+        # FedEx and UPS labels use the carrier tracking number as the strongest lookup value.
         add_lookup_candidate(candidates, results.get("Tracking Number"), "Tracking Number")
         add_lookup_candidate(candidates, results.get("PO Number"), "PO Number")
-        if not tracking_first:
-            # Non-FedEx carriers may also have a useful Order Number as a third fallback
-            add_lookup_candidate(candidates, results.get("Order Number"), "Sales Order")
     elif sales_order_first:
         add_lookup_candidate(candidates, results.get("Order Number"), "Sales Order")
         add_lookup_candidate(candidates, results.get("PO Number"), "PO Number")
@@ -797,7 +820,7 @@ Tracking Number rules:
 - OCR may read "TRK#" as "TRKH" or "TRK" — still extract the digit groups that follow.
 - FedEx proof-of-delivery and invoices may also contain a tracking number — extract it into Tracking Number.
 - UPS tracking numbers start with "1Z" (e.g., "1Z999AA10123456784").
-- Do NOT use barcode digit strings (e.g., "9632 0019 6 000 000 0000 ...") as the tracking number unless they match TRK# or a known carrier format.
+- Do NOT use barcode digit strings as the tracking number. FedEx labels contain a GS1 barcode row like "9622 0019 0 (000 000 0000) 0 00 5240 8101 8783" — do NOT extract "9622 0019 0" or any partial segment from this row. Only use the digits that follow the "TRK#" label.
 
 Order Number rules (Sales Order):
 - Computerland packing slips: "Sales order" field contains an ORD-XXXXX-XXXXXX value (e.g., "ORD-16625-M7V2B1"). Extract into Order Number.
@@ -816,7 +839,7 @@ ISSQUARED PACKING LIST:
 - Vendor Name → "ISSQUARED"
 
 FEDEX SHIPPING LABEL:
-- Tracking Number → digits after "TRK#" (e.g., "526337691880")
+- Tracking Number → digits after "TRK#" label only (e.g., "TRK# 5240 8101 8783" → "524081018783"). The label also contains a long GS1 barcode row like "9622 0019 0 (000 000 0000) 0 00 5240 8101 8783" — ignore the entire row; the TRK# line is the authoritative source. NEVER extract "9622...", "8962...", or any other partial barcode segment as the tracking number.
 - PO Number → "PO#" value (e.g., "546010"). OCR may misread "PO#" as "PC" — if you see "PC: NNNNNN" at the bottom, treat it as PO Number.
 - PO Number fallback → number after "REF:OP" in the TO address (e.g., "REF:OP 67031" → PO Number "67031")
 - Order Number → leave as "Needs Manual Review". The "Order#" field on FedEx labels (e.g., "917994866") is the SHIPPER's internal reference, not a city order.
@@ -916,6 +939,102 @@ def ask_ollama_for_fields(text, model_name, learned_po_examples=None, correction
         results[field_name] = str(value).strip()
 
     return results
+
+
+_VALID_LOOKUP_SOURCES = frozenset(
+    ["PO Number", "Tracking Number", "Sales Order", "Invoice Number Fallback", "Needs Manual Review"]
+)
+
+
+def build_lookup_candidates_prompt(text, results):
+    learned_lessons_text = "\n".join(f"- {lesson}" for lesson in AGENT_EXTRACTION_LESSONS)
+    display_fields = {k: v for k, v in results.items() if k in FIELD_NAMES}
+    return f"""
+You are a lookup-routing agent. Your only job: decide what values to search for in a Purchase Orders database, in priority order.
+
+You will see the raw OCR text and the fields already extracted from it. Use both to reason carefully.
+
+Return only valid JSON. Do not include explanations or markdown.
+
+{{
+  "candidates": [
+    {{"value": "<exact value>", "source": "<source label>"}},
+    ...
+  ],
+  "reasoning": "<one sentence explaining the priority order>"
+}}
+
+Allowed source labels (use exactly):
+- "PO Number"         — city purchase order number (5–6 digits, or hyphenated like 67030-11959)
+- "Tracking Number"   — carrier tracking number (12+ digit FedEx, 18-char UPS 1Z...)
+- "Sales Order"       — vendor sales order (e.g. ORD-16625-M7V2B1 for Computerland)
+- "Invoice Number Fallback" — invoice number when no better value exists
+- "Needs Manual Review"    — cannot determine a reliable lookup value
+
+Priority rules:
+- FedEx shipping labels: the tracking number from the "TRK#" label is the best lookup value. The label also contains a GS1 barcode row (e.g. "9622 0019 0 (000 000 0000) 0 00 5240 8101 8783") — NEVER use any digits from this row. Only the number next to the "TRK#" label is the tracking number.
+- Documents with a PO# / P.O. / Purchase Order label: PO Number is first.
+- Computerland packing slips: Sales Order (ORD-...) is first; Requisition number is a PO Number fallback.
+- UPS shipping labels: Tracking Number is first.
+- If only an Invoice Number is available, use "Invoice Number Fallback".
+- Include multiple candidates in priority order so the system can try each if the first fails.
+- If a field value is "Needs Manual Review" or empty, do not include it as a candidate.
+
+Learned extraction lessons:
+{learned_lessons_text}
+
+Extracted fields:
+{json.dumps(display_fields, indent=2)}
+
+OCR text:
+{clean_text(text)}
+""".strip()
+
+
+def ask_ollama_for_lookup_candidates(text, results, model_name):
+    prompt = build_lookup_candidates_prompt(text, results)
+    request_body = {"model": model_name, "prompt": prompt, "stream": False, "format": "json"}
+
+    ollama_result = _call_ollama_with_retry(request_body)
+    if ollama_result is None:
+        return None
+
+    try:
+        decision = json.loads(ollama_result["response"])
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+    raw_candidates = decision.get("candidates")
+    if not isinstance(raw_candidates, list):
+        return None
+
+    reasoning = str(decision.get("reasoning") or "").strip()
+
+    validated = []
+    seen = set()
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value") or "").strip()
+        source = str(item.get("source") or "").strip()
+        if not value or source not in _VALID_LOOKUP_SOURCES:
+            continue
+        if is_missing_value(value) or value in seen:
+            continue
+        if source == "PO Number" and not is_valid_po_candidate(value):
+            debug_print(
+                f"Rejected AI PO Number candidate {value!r}: not a plausible city PO number."
+            )
+            continue
+        seen.add(value)
+        validated.append({"value": value, "source": source})
+
+    if not validated:
+        return None
+
+    debug_print(f"AI lookup reasoning: {reasoning}")
+    debug_print(f"AI lookup candidates: {validated}")
+    return validated
 
 
 def build_verification_prompt(text, results, lookup_result, correction_examples=None):
@@ -1079,7 +1198,30 @@ def extract_fields(text, model_name, learned_po_examples=None, correction_exampl
     results = ask_ollama_for_fields(text, model_name, learned_po_examples, correction_examples)
     if results is not None:
         debug_print(f"Extracted fields with Ollama model: {model_name}")
-        return validate_po_number(results, text)
+        results = validate_po_number(results, text)
+
+        # Let the AI reason over the full OCR text + extracted fields to decide
+        # what to look up. This replaces the hardcoded vendor-priority rules with
+        # contextual reasoning (e.g. it can distinguish a TRK# value from a GS1
+        # barcode segment by reading the surrounding label text).
+        rule_candidates = get_lookup_candidates(results)
+        ai_candidates = ask_ollama_for_lookup_candidates(text, results, model_name)
+        if ai_candidates:
+            if should_force_tracking_first(results):
+                # FedEx/UPS labels are easy to mis-route if the model focuses on
+                # barcode text or a blank PO area. Keep the regex-confirmed
+                # carrier tracking number first, then try AI suggestions after it.
+                ai_candidates = merge_lookup_candidates(rule_candidates, ai_candidates)
+
+            results["_ai_lookup_candidates"] = ai_candidates
+            # Update the display fields to reflect what the AI chose.
+            results["Lookup Value"] = ai_candidates[0]["value"]
+            results["Lookup Value Source"] = ai_candidates[0]["source"]
+            results["Lookup Candidates"] = "; ".join(
+                f"{c['source']}: {c['value']}" for c in ai_candidates
+            )
+
+        return results
 
     # Backup choice: use the simpler regex extraction if Ollama is not available.
     debug_print("Ollama was not available, so regex extraction was used instead.")
@@ -1149,7 +1291,8 @@ def print_end_user_result(file_path, results, lookup_result):
 
 
 def lookup_order_candidates(results):
-    candidates = get_lookup_candidates(results)
+    # Use AI-reasoned candidates when available; fall back to rule-based derivation.
+    candidates = results.pop("_ai_lookup_candidates", None) or get_lookup_candidates(results)
     if not candidates:
         return lookup_po_number(po_number=None)
 
