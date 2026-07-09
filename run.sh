@@ -18,8 +18,16 @@ if ! pgrep -x "ollama" > /dev/null 2>&1; then
     sleep 2
 fi
 
-# --- Open browser after app starts ---
-(sleep 3 && open http://127.0.0.1:7860) &
+# --- Open browser once the app is actually ready ---
+(
+    for i in $(seq 1 120); do
+        if curl -s -o /dev/null http://127.0.0.1:7860; then
+            open http://127.0.0.1:7860
+            break
+        fi
+        sleep 1
+    done
+) &
 
 echo "Starting Invoice OCR Agent at http://127.0.0.1:7860"
 echo "Press Ctrl+C to stop."

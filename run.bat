@@ -18,8 +18,8 @@ if errorlevel 1 (
     timeout /t 2 /nobreak >nul
 )
 
-:: --- Open browser after short delay ---
-start /b "" cmd /c "timeout /t 3 /nobreak >nul && start http://127.0.0.1:7860"
+:: --- Open browser once the app is actually ready ---
+start /b "" cmd /c "for /l %%i in (1,1,120) do (curl -s -o nul http://127.0.0.1:7860 >nul 2>&1 && (start http://127.0.0.1:7860 & exit /b) || timeout /t 1 /nobreak >nul)"
 
 echo Starting Invoice OCR Agent at http://127.0.0.1:7860
 echo Press Ctrl+C to stop.
