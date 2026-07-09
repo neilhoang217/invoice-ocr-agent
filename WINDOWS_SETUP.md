@@ -64,11 +64,9 @@ Copy **Purchase Orders.xlsx** into the `approved_excel_files\` folder inside the
 
 ## Step 6 — Start the App
 
-Double-click **run.bat** (or run it from Command Prompt):
+Double-click **Start Invoice OCR Agent.bat** (or `run.bat` from Command Prompt).
 
-```
-run.bat
-```
+Tip: right-click **Start Invoice OCR Agent.bat** → **Send to** → **Desktop (create shortcut)** to get a desktop icon you can double-click any time.
 
 The app will open automatically in your browser at:
 ```

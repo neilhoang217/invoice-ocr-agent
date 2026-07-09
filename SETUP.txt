@@ -47,18 +47,22 @@ FIRST-TIME SETUP
 
 STARTING THE APP (every time)
 ------------------------------
-1. Open Terminal
+Double-click "Start Invoice OCR Agent.command" in the invoice-ocr-agent
+folder. (First time only: if macOS blocks it, right-click the file,
+choose Open, then confirm.)
 
-2. Navigate to the invoice-ocr-agent folder:
-      cd /path/to/invoice-ocr-agent
+To get a Desktop icon: right-click the file, choose "Make Alias",
+then drag the alias to your Desktop.
 
-3. Run:
-      ./run.sh
+The app will open automatically in your browser at:
+   http://127.0.0.1:7860
 
-   The app will open automatically in your browser at:
-      http://127.0.0.1:7860
+To stop the app, close the Terminal window that opened (or press
+Ctrl+C inside it).
 
-4. To stop the app, press Ctrl+C in the Terminal window.
+Alternatively, from Terminal:
+1. cd /path/to/invoice-ocr-agent
+2. ./run.sh
 
 
 ADDING EXCEL FILES
